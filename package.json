@@ -1,0 +1,15 @@
+{
+  "name": "dominance",
+  "version": "1.0.0",
+  "scripts": {
+    "setup": "cd server && npm install && cd ../client && npm install",
+    "seed": "cd server && node data/seed.js",
+    "dev": "concurrently \"cd server && npm run dev\" \"cd client && npm run dev\"",
+    "start": "concurrently \"cd server && npm start\" \"cd client && npm run preview\"",
+    "render:build": "cd client && npm install && npm run build && cd ../server && npm install",
+    "render:start": "cd server && node index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

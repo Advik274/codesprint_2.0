@@ -1,0 +1,21 @@
+app = "dominance-v7"
+primary_region = "bom"   # Mumbai — closest to NIET
+
+[build]
+  builder = "heroku/buildpacks:20"
+
+[env]
+  PORT = "8080"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false   # Keep alive during event
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512             # Upgrade to 1024 for 340 teams
