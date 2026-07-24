@@ -3,9 +3,14 @@ import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, getRes
 import { startBatteryDrain, stopBatteryDrain, pauseBatteryDrain, resumeBatteryDrain } from '../lib/battery.js';
 import { getRandomGauntletQuestion, getFiveZoneOptions, pickQuizQuestions } from '../lib/questions.js';
 import { buildClientState } from '../index.js';
+import { authAdmin, authZone } from '../lib/auth.js';
+import { archiveEvent, snapshotNow } from '../lib/snapshots.js';
+import { isAnswerCorrect } from '../lib/utils.js';
 
-const ADMIN = 'dominance2024';
-const auth = (t) => t === ADMIN;
+// Full admin power (Setup/Control/Reset/Backup/etc)
+const auth = (t) => authAdmin(t);
+// Zone-laptop power — a dedicated zone session OR full admin
+const authZ = (t) => authZone(t);
 // Battery constants — read from event_config at runtime so they're configurable
 const getAttemptCost = (db) => db.app_state.event_config?.battery_attempt_cost ?? 5;
 const getCapturGain  = (db) => db.app_state.event_config?.battery_capture_gain ?? 20;
@@ -101,9 +106,38 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
 
     // ── ZONE OPERATOR JOIN ─────────────────────────────────────────
     socket.on('zone:operator_join', ({ zone_id, admin_token }) => {
-      if (!auth(admin_token)) { socket.emit('error', { message: 'Invalid token' }); return; }
+      if (!authZ(admin_token)) { socket.emit('error', { message: 'Invalid token' }); return; }
       socket.join(`zone_${zone_id}`);
       const zone = db.zones.find(z => z.id === zone_id);
+
+      // BUG FIX: a zone laptop refreshing/reconnecting mid-attempt used to
+      // always reset the operator's screen to idle — but the server-side
+      // zone._pending was never cleared, so the zone stayed "BUSY" for
+      // everyone else with no way for the operator to see or cancel it
+      // (their own screen showed nothing in progress). Resume the exact
+      // in-progress state instead so the operator can finish or cancel it.
+      if (zone?._pending) {
+        const pendingTeam = db.teams.find(t => t.id === zone._pending.team_id);
+        if (zone._pending.problem) {
+          const { answer: _hidden, ...safeProblem } = zone._pending.problem;
+          socket.emit('zone:challenge_ready', {
+            zone_id, zone_name: zone.name,
+            team_name: zone._pending.team_name, team_color: zone._pending.team_color,
+            battery_remaining: pendingTeam?.battery,
+            problem: safeProblem, mode: 'attempt',
+            attempts_left: zone._pending.attempts_left ?? 3, hint: null,
+          });
+        } else {
+          socket.emit('zone:pick_problem', {
+            zone_id, zone_name: zone.name,
+            team_name: zone._pending.team_name, team_color: zone._pending.team_color,
+            battery_remaining: pendingTeam?.battery,
+            options: (zone._pending.options || []).map(o => ({ id: o.id, label: o.label, type: o.type })),
+          });
+        }
+        return;
+      }
+
       socket.emit('zone:operator_ready', { zone });
     });
 
@@ -118,7 +152,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
       if (!team || !q || team.is_eliminated || q.id !== question_id) return;
       if (team.phase1_scores.find(s => s.round === db.app_state.phase1_round)) return;
 
-      const correct = answer.trim().toLowerCase() === q.answer.trim().toLowerCase();
+      const correct = isAnswerCorrect(answer, q);
       const score = correct ? calcPhase1Score(q.points, q.time_limit_seconds, time_taken_ms) : 0;
       team.phase1_scores.push({ round: db.app_state.phase1_round, score, correct, time_taken_ms });
       team.phase1_total_score += score;
@@ -132,7 +166,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
 
     // ── PHASE 2: Team arrives at zone ─────────────────────────────
     socket.on('zone:team_arrive', ({ zone_id, team_passcode, admin_token }) => {
-      if (!auth(admin_token)) return;
+      if (!authZ(admin_token)) return;
       if (!rateLimit(socket.id, `zone_arrive_${zone_id}`, 3000)) return;
 
       // ── PAUSE GUARDS ─────────────────────────────────────────────
@@ -160,6 +194,21 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
       team.battery = Math.max(0, team.battery - getAttemptCost(db));
       // Delta: only battery changed for this team
       emitTeamDelta(io, team, ['battery']);
+
+      // BUG FIX: if this attempt cost drained them to exactly 0%, eliminate
+      // now instead of waiting up to 1 minute for the next periodic drain
+      // tick to notice — and don't let them proceed into the challenge.
+      if (team.battery <= 0) {
+        team.is_eliminated = true;
+        team.elimination_phase = 'phase2';
+        emitTeamDelta(io, team, ['is_eliminated', 'elimination_phase']);
+        io.emit('team:eliminated', { team_id: team.id, team_name: team.name });
+        io.emit('toast:broadcast', { message: `💀 ${team.name} eliminated — battery depleted`, type: 'danger' });
+        log(io, db, 'elimination', `💀 ${team.name} eliminated — battery hit 0% attempting ${zone.name}`, team.id);
+        saveDB();
+        socket.emit('zone:error', { message: `${team.name} hit 0% battery — eliminated.` });
+        return;
+      }
 
       if (zone.owner_team_id && zone.problem) {
         // Captured zone with defense — show challenge directly
@@ -206,7 +255,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
 
     // ── ZONE: Operator selects problem (neutral zone) ─────────────
     socket.on('zone:select_problem', ({ zone_id, problem_id, admin_token }) => {
-      if (!auth(admin_token)) return;
+      if (!authZ(admin_token)) return;
       const zone = db.zones.find(z => z.id === zone_id);
       if (!zone?._pending?.options) { socket.emit('zone:error', { message: 'No pending selection' }); return; }
 
@@ -228,7 +277,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
 
     // ── ZONE: Team submits answer ─────────────────────────────────
     socket.on('zone:submit_answer', ({ zone_id, answer, admin_token }) => {
-      if (!auth(admin_token)) return;
+      if (!authZ(admin_token)) return;
       if (!rateLimit(socket.id, `zone_submit_${zone_id}`, 1500)) return;
       // Pause guard
       if (db.app_state.master_paused) { socket.emit('zone:error', { message: '⏸ Event is paused' }); return; }
@@ -239,7 +288,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
 
       const pending = zone._pending;
       const team = db.teams.find(t => t.id === pending.team_id);
-      const correct = answer.trim().toLowerCase() === pending.problem.answer.trim().toLowerCase();
+      const correct = isAnswerCorrect(answer, pending.problem);
 
       if (correct) {
         // ── SUCCESS ────────────────────────────────────────────────
@@ -290,11 +339,20 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
           if (team) {
             // No battery refund on full failure — they burned the attempt cost
           }
+          // FAIRNESS FIX: once a problem's answer has been revealed to a
+          // team here, mark it used so it can't be handed to a different
+          // team at another zone later with the same answer now "in the
+          // wild" (previously only successfully-solved problems were
+          // marked used — a failed one stayed in circulation).
+          if (!db.used_zone_problem_ids.includes(pending.problem.id)) {
+            db.used_zone_problem_ids.push(pending.problem.id);
+          }
+          const revealedAnswer = pending.problem.answer ?? pending.problem.answers?.[0] ?? '';
           saveDB();
           socket.emit('zone:capture_result', {
             success: false, zone_id, attempts_left: 0,
-            correct_answer: pending.problem.answer,
-            message: `❌ Out of attempts! Answer was: "${pending.problem.answer}"`,
+            correct_answer: revealedAnswer,
+            message: `❌ Out of attempts! Answer was: "${revealedAnswer}"`,
           });
           io.emit('toast:broadcast', { message: `${team?.name} used all attempts on ${zone.name}`, type: 'warning' });
           log(io, db, 'zone_fail', `${team?.name} failed ${zone.name} (0 attempts left)`, team?.id);
@@ -311,8 +369,10 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
             hint = pending.problem.hint;
           } else if (showHint) {
             // Derive a generic hint: first letter + length
-            const ans = pending.problem.answer;
-            hint = `Starts with "${ans[0].toUpperCase()}", ${ans.length} character${ans.length !== 1 ? 's' : ''}`;
+            // (BUG FIX: problems can now carry `answers: [...]` instead of a
+            // single `answer` string — fall back to the first accepted one)
+            const ans = pending.problem.answer ?? pending.problem.answers?.[0] ?? '';
+            hint = ans ? `Starts with "${ans[0].toUpperCase()}", ${ans.length} character${ans.length !== 1 ? 's' : ''}` : null;
           }
 
           socket.emit('zone:wrong_answer', {
@@ -328,7 +388,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
 
     // ── ZONE: Cancel attempt (refund) ─────────────────────────────
     socket.on('zone:cancel_attempt', ({ zone_id, admin_token }) => {
-      if (!auth(admin_token)) return;
+      if (!authZ(admin_token)) return;
       const zone = db.zones.find(z => z.id === zone_id);
       if (!zone) return;
       if (zone._pending) {
@@ -666,6 +726,27 @@ startBatteryDrain(db, io, saveDB);
       emitZoneDelta(io, zone);
     });
 
+    // Lighter alternative to admin:reset_zone — clears a stuck "BUSY" state
+    // (refunding the pending team's attempt cost) without wiping ownership/
+    // defense. Useful if an operator's device is gone for good and can't
+    // reconnect to resume/cancel the attempt itself.
+    socket.on('admin:clear_zone_pending', ({ zone_id, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const zone = db.zones.find(z => z.id === zone_id);
+      if (!zone || !zone._pending) return;
+      const team = db.teams.find(t => t.id === zone._pending.team_id);
+      if (team) {
+        team.battery = Math.min(100, team.battery + getAttemptCost(db));
+        emitTeamDelta(io, team, ['battery']);
+      }
+      zone._pending = null;
+      emitZoneDelta(io, zone);
+      saveDB();
+      io.to(`zone_${zone_id}`).emit('zone:operator_ready', { zone });
+      io.emit('toast:broadcast', { message: `🧹 Cleared stuck attempt on ${zone.name}`, type: 'info' });
+      log(io, db, 'phase_change', `Admin cleared stuck attempt on ${zone.name}`);
+    });
+
     socket.on('admin:refill_all_batteries', ({ amount, admin_token }) => {
       if (!auth(admin_token)) return;
       const add = Math.min(100, Math.max(1, parseInt(amount) || 20));
@@ -865,6 +946,13 @@ startBatteryDrain(db, io, saveDB);
 
       stopBatteryDrain();
 
+      // Archive the completed event before wiping — so results aren't lost
+      let archived = null;
+      if (db.teams && db.teams.length > 0) {
+        try { archived = archiveEvent(db, 'factory_reset'); }
+        catch (e) { console.error('[Archive] Failed:', e.message); }
+      }
+
       // Wipe everything, preserve event_config
       const savedConfig = db.app_state.event_config;
       const fresh = {
@@ -885,13 +973,20 @@ startBatteryDrain(db, io, saveDB);
         used_question_ids: [], used_zone_problem_ids: [],
         event_log: [], phase_history: [],
         audience_votes: {}, // Sprint 3: clear votes on reset
+        help_requests: [],
       };
+      snapshotNow(db); // extra local recovery point, in addition to the archive above
       Object.assign(db, fresh);
 
       await saveDBNow();
       io.emit('state:sync', buildClientState(db));
-      socket.emit('admin:reset_complete', { message: '✅ Factory reset complete. Ready for a new event.' });
-      log(io, db, 'phase_change', '🔄 FACTORY RESET — clean slate');
+      socket.emit('admin:reset_complete', {
+        message: archived
+          ? `✅ Factory reset complete. Previous event archived as "${archived.filename}".`
+          : '✅ Factory reset complete. Ready for a new event.',
+        archived: archived?.filename || null,
+      });
+      log(io, db, 'phase_change', archived ? `🔄 FACTORY RESET — archived as ${archived.filename}` : '🔄 FACTORY RESET — clean slate');
     });
 
     // ── V2: PHASE ROLLBACK ─────────────────────────────────────────
@@ -926,6 +1021,15 @@ startBatteryDrain(db, io, saveDB);
           zone._pending = null;
         }
       });
+
+      // BUG FIX: stopBatteryDrain() above is unconditional, but if the
+      // restored phase is phase2, drain needs to resume — otherwise a
+      // rollback into Phase 2 silently freezes batteries with no visible
+      // indication anything is wrong.
+      if (db.app_state.current_phase === 'phase2') {
+        db.app_state.phase2_paused = false;
+        startBatteryDrain(db, io, saveDB);
+      }
 
       await saveDBNow();
       io.emit('state:sync', buildClientState(db));
@@ -1032,6 +1136,36 @@ startBatteryDrain(db, io, saveDB);
       });
     });
 
+    // ── Need Help button (team-side, no admin token needed) ───────
+    socket.on('team:help_request', ({ team_id, message }) => {
+      if (!rateLimit(socket.id, 'team:help_request', 15000)) return; // one call per 15s
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team) return;
+      if (!db.help_requests) db.help_requests = [];
+      const req = {
+        id: uuid(), team_id, team_name: team.name, team_color: team.color,
+        phase: db.app_state.current_phase,
+        message: (message || '').slice(0, 200),
+        created_at: new Date().toISOString(),
+        resolved: false,
+      };
+      db.help_requests.unshift(req);
+      if (db.help_requests.length > 100) db.help_requests.length = 100;
+      saveDB();
+      io.emit('help:new', req);
+      io.emit('toast:broadcast', { message: `🆘 ${team.name} needs help!`, type: 'warning' });
+      log(io, db, 'help_request', `🆘 ${team.name} requested help`, team_id);
+    });
+
+    socket.on('admin:resolve_help', ({ help_id, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const req = (db.help_requests || []).find(h => h.id === help_id);
+      if (!req) return;
+      req.resolved = true;
+      saveDB();
+      io.emit('help:resolved', { help_id });
+    });
+
     socket.on('disconnect', () => {
       clearRateLimits(socket.id);
     });
@@ -1084,10 +1218,8 @@ startBatteryDrain(db, io, saveDB);
           const answers = teamMemberAnswers[member] || {};
           let score = 0;
           questions.forEach(q => {
-            if (answers[q.id] !== undefined) {
-              const correct = String(q.answer).trim().toLowerCase();
-              const given = String(answers[q.id]).trim().toLowerCase();
-              if (correct === given) score += (q.points || 10);
+            if (answers[q.id] !== undefined && isAnswerCorrect(answers[q.id], q)) {
+              score += (q.points || 10);
             }
           });
           memberScoreMap[member] = score;

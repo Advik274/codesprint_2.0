@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
-import { BatteryBar, CountdownTimer } from '../components/shared/index.jsx';
+import { BatteryBar, CountdownTimer, ThemeToggle, MemePopup } from '../components/shared/index.jsx';
 import { getSocket } from '../hooks/useSocket';
+import { useSound } from '../hooks/useSound';
 
 export default function Spectator() {
   const { state } = useApp();
@@ -86,8 +87,30 @@ export default function Spectator() {
     setHasVoted(true);
   };
 
+  // ── Hype mode: sound effects + flash on key moments ──────────────
+  const { muted, toggleMute, play } = useSound();
+  const [flash, setFlash] = useState(null); // 'capture' | 'eliminate' | 'winner' | null
+  useEffect(() => {
+    const socket = getSocket();
+    const onLog = (entry) => {
+      if (entry.type === 'zone_captured') { play('capture'); flashFor('capture'); }
+      else if (entry.type === 'elimination') { play('eliminate'); flashFor('eliminate'); }
+    };
+    const onRoundStart = () => play('roundStart');
+    const onResults = (d) => { if (d.is_winner) { play('winner'); flashFor('winner'); } };
+    const flashFor = (kind) => { setFlash(kind); setTimeout(() => setFlash(null), 700); };
+    socket.on('log:entry', onLog);
+    socket.on('phase1:round_started', onRoundStart);
+    socket.on('results:announce', onResults);
+    return () => { socket.off('log:entry', onLog); socket.off('phase1:round_started', onRoundStart); socket.off('results:announce', onResults); };
+  }, [play]);
+
   return (
     <div style={{ minHeight:'100vh', paddingBottom:70, position:'relative' }}>
+
+      {/* Comic relief for the crowd during any lull — paused during the
+          results reveal, that moment deserves the full spotlight. */}
+      <MemePopup enabled={phase !== 'results'} />
 
       {/* Header */}
       <div style={{ background:'var(--bg2)', borderBottom:'1px solid var(--border)', padding:'18px 32px', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
@@ -107,8 +130,21 @@ export default function Spectator() {
         <div style={{ textAlign:'right' }}>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:13, color:'var(--text3)' }}>{state.teams.filter(t=>!t.is_eliminated).length} active</div>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--danger)', marginTop:2 }}>{state.teams.filter(t=>t.is_eliminated).length} eliminated</div>
+          <div style={{ display:'flex', gap:8, marginTop:8, justifyContent:'flex-end' }}>
+            <button className="sound-toggle" onClick={toggleMute}>{muted ? '🔇 Muted' : '🔊 Sound'}</button>
+            <ThemeToggle />
+          </div>
         </div>
       </div>
+
+      {/* Hype flash on capture/eliminate/winner */}
+      {flash && (
+        <div style={{
+          position:'fixed', inset:0, zIndex:5, pointerEvents:'none',
+          background: flash==='eliminate' ? 'rgba(255,51,85,0.12)' : flash==='winner' ? 'rgba(255,215,0,0.14)' : 'rgba(0,255,136,0.1)',
+          animation:'fadeIn 0.15s ease',
+        }}/>
+      )}
 
       <div style={{ maxWidth:860, margin:'0 auto', padding:'28px 16px' }}>
 

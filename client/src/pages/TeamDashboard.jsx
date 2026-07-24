@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
-import { getSocket } from '../hooks/useSocket';
-import { Navbar, ToastContainer, BatteryBar, CountdownTimer } from '../components/shared/index.jsx';
+import { getSocket, onSocketReconnect } from '../hooks/useSocket';
+import { Navbar, ToastContainer, BatteryBar, CountdownTimer, HelpButton, MemePopup } from '../components/shared/index.jsx';
 import { QuestionCard, EliminationOverlay, Phase1Leaderboard } from '../components/phase1/index.jsx';
 import { SubmissionForm } from '../components/phase3/index.jsx';
 import { QuizRound, QuizResultCard } from '../components/quiz/index.jsx';
@@ -10,7 +10,7 @@ import { QuizRound, QuizResultCard } from '../components/quiz/index.jsx';
 export default function TeamDashboard() {
   const { teamId } = useParams();
   const navigate = useNavigate();
-  const { state } = useApp();
+  const { state, addToast } = useApp();
   const [showEliminated, setShowEliminated] = useState(false);
   const [phase3Problem, setPhase3Problem] = useState(null);
   const [teamPasscode] = useState(() => sessionStorage.getItem('team_passcode') || '');
@@ -21,7 +21,13 @@ export default function TeamDashboard() {
     const socket = getSocket();
     socket.on('team:eliminated', d => { if (d.team_id === teamId) setShowEliminated(true); });
     socket.on('phase3:problem_revealed', d => { if (d.team_id === 'all' || d.team_id === teamId) setPhase3Problem(d.problem); });
-    return () => { socket.off('team:eliminated'); socket.off('phase3:problem_revealed'); };
+    // Rejoin the private team_<id> room after a dropped connection — sockets
+    // don't keep room membership across a reconnect, so targeted server
+    // emits (defense prompts, individual problem reveals) would otherwise
+    // silently stop reaching this team until a manual page refresh.
+    const rejoin = () => socket.emit('team:join', { team_id: teamId, passcode: teamPasscode });
+    const unsub = onSocketReconnect(rejoin);
+    return () => { socket.off('team:eliminated'); socket.off('phase3:problem_revealed'); unsub(); };
   }, [teamId]);
 
   useEffect(() => {
@@ -34,6 +40,30 @@ export default function TeamDashboard() {
     if (team?.phase3_problem) setPhase3Problem(team.phase3_problem);
   }, [team?.phase3_problem]);
 
+  // Live rank movement — toast when this team's position on the current
+  // phase's leaderboard changes, so they don't have to keep scrolling the
+  // board to notice they've been overtaken (or just took the lead).
+  const phaseForRank = state.app_state.current_phase;
+  const prevRankRef = useRef({});
+  useEffect(() => {
+    if (!team || team.is_eliminated) return;
+    let board = null;
+    if (phaseForRank === 'phase1') board = [...state.teams].sort((a, b) => b.phase1_total_score - a.phase1_total_score);
+    else if (phaseForRank === 'phase2') board = [...state.teams].filter(t => !t.is_eliminated).sort((a, b) => b.zones_captured - a.zones_captured || b.battery - a.battery);
+    else if (phaseForRank === 'quiz_round' && state.teams.some(t => t.quiz_score !== undefined && t.quiz_score !== null && t.quiz_score > 0)) {
+      board = [...state.teams].filter(t => !t.is_eliminated).sort((a, b) => (b.quiz_score || 0) - (a.quiz_score || 0));
+    }
+    if (!board) return;
+    const rank = board.findIndex(t => t.id === teamId) + 1;
+    if (rank === 0) return;
+    const prev = prevRankRef.current[phaseForRank];
+    if (prev !== undefined && prev !== rank) {
+      if (rank < prev) addToast({ message: `📈 You moved up to #${rank}!`, type: 'success' });
+      else addToast({ message: `📉 You dropped to #${rank}`, type: 'warning' });
+    }
+    prevRankRef.current[phaseForRank] = rank;
+  }, [state.teams, phaseForRank, teamId]);
+
   if (!team) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>Loading...</div></div>;
 
   const phase = state.app_state.current_phase;
@@ -43,6 +73,16 @@ export default function TeamDashboard() {
       <Navbar subtitle={team.name} />
       <ToastContainer />
       {showEliminated && <EliminationOverlay team={team} onDismiss={() => { setShowEliminated(false); navigate('/spectator'); }} />}
+      {!team.is_eliminated && !['setup','results'].includes(phase) && (
+        <HelpButton teamId={teamId} teamName={team.name} phase={phase} />
+      )}
+      {/* Only during genuinely idle moments — never mid-question, mid-quiz,
+          or mid-build, where a joke popping up would just be annoying. */}
+      <MemePopup enabled={
+        phase === 'setup'
+        || phase === 'phase2'
+        || (phase === 'phase1' && !(state.currentQuestion && state.app_state.phase1_round_active))
+      } />
 
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px' }}>
 
@@ -55,6 +95,9 @@ export default function TeamDashboard() {
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>{team.year} Year · Code: {teamPasscode}</div>
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginTop: 24, fontSize: 13 }}>Waiting for the event to start...</div>
+            <a href="/guide" style={{ display: 'inline-block', marginTop: 16, color: 'var(--accent)', fontSize: 12, fontFamily: 'var(--font-mono)', textDecoration: 'none', border: '1px solid var(--border2)', borderRadius: 6, padding: '8px 18px' }}>
+              📖 How does this work?
+            </a>
           </div>
         )}
 
@@ -190,6 +233,14 @@ function Phase2View({ team, teamId, state }) {
 
   const myZones = state.zones.filter(z => z.owner_team_id === teamId);
   const battColor = team.battery > 50 ? 'var(--accent)' : team.battery > 20 ? 'var(--warning)' : 'var(--danger)';
+  // BUG FIX: these used to be hardcoded (2%/min, -5%, +20%) regardless of
+  // what the admin actually configured — showing teams the wrong economy
+  // whenever a non-default preset (e.g. Zone Wars: 3%/min, -10%, +25%) was
+  // in use for the event they were actually playing.
+  const cfg = state.app_state?.event_config || {};
+  const drainRate = cfg.battery_drain_rate ?? 2;
+  const attemptCost = cfg.battery_attempt_cost ?? 5;
+  const captureGain = cfg.battery_capture_gain ?? 20;
 
   return (
     <div>
@@ -205,7 +256,7 @@ function Phase2View({ team, teamId, state }) {
           <div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: team.color }}>{team.name}</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-              {team.zones_captured} zone{team.zones_captured !== 1 ? 's' : ''} captured · drains 2%/min
+              {team.zones_captured} zone{team.zones_captured !== 1 ? 's' : ''} captured · drains {drainRate}%/min
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -215,8 +266,8 @@ function Phase2View({ team, teamId, state }) {
         </div>
         <BatteryBar battery={team.battery} showLabel={false} height={10} />
         <div style={{ marginTop: 10, display: 'flex', gap: 16, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
-          <span>Attempt cost: <span style={{ color: 'var(--danger)' }}>−5%</span></span>
-          <span>Capture gain: <span style={{ color: 'var(--accent)' }}>+20%</span></span>
+          <span>Attempt cost: <span style={{ color: 'var(--danger)' }}>−{attemptCost}%</span></span>
+          <span>Capture gain: <span style={{ color: 'var(--accent)' }}>+{captureGain}%</span></span>
         </div>
       </div>
 

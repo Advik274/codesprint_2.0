@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Env files — never commit real credentials
+.env
+.env.local
+.env.*.local
+
+# Build output
+client/dist/
+
+# Runtime data — generated at runtime, contains live passcodes
+server/data/db.json
+server/data/snapshots/
+server/data/archive/
+
+# Editor/OS
+.DS_Store
+*.log

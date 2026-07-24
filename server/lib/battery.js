@@ -14,8 +14,22 @@ export function startBatteryDrain(db, io, saveDB) {
     const eliminations = [];
 
     db.teams.forEach(team => {
-      // V2 FIX: skip teams already eliminated or at 0% — no change, no emit
-      if (team.is_eliminated || team.battery <= 0) return;
+      if (team.is_eliminated) return; // fully done with this team
+
+      // BUG FIX: a team can reach 0% battery via a zone-attempt cost
+      // (deducted instantly in events.js) rather than this drain tick.
+      // The old guard here (`is_eliminated || battery <= 0`) skipped those
+      // teams too, which meant the elimination check below never ran for
+      // them — they'd sit at 0% battery, marked active, forever (or until
+      // an admin noticed and eliminated them by hand). Catch that here
+      // instead of silently skipping.
+      if (team.battery <= 0) {
+        team.is_eliminated = true;
+        team.elimination_phase = 'phase2';
+        eliminations.push({ team_id: team.id, team_name: team.name });
+        db.event_log.unshift({ timestamp: new Date().toISOString(), type: 'elimination', message: `💀 ${team.name} eliminated — battery dead`, team_id: team.id });
+        return;
+      }
 
       const prev = team.battery;
       team.battery = Math.max(0, parseFloat((team.battery - drainRate).toFixed(1)));

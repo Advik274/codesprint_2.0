@@ -61,7 +61,7 @@ You should see: `{"status":"ok","phase":"setup"}`
 
 ### STEP 5: Test before event day
 
-1. Open `https://dominance-yyy.vercel.app/admin` → Token: `dominance2024`
+1. Open `https://dominance-yyy.vercel.app/admin` → Password: whatever you set as ADMIN_PASSWORD
 2. Register 2 test teams
 3. Create 1 test zone
 4. Open `/` on a phone → join a test team
@@ -135,4 +135,4 @@ Or if deployed on Railway, set the env variable `RESET_DB=true` and redeploy onc
 | Spectator board | `https://your-vercel-app.vercel.app/spectator` |
 | Zone laptop | `https://your-vercel-app.vercel.app/zone/[ZONE_ID]` |
 
-Admin token: `dominance2024`
+Admin/zone passwords: whatever you set as ADMIN_PASSWORD / ZONE_PASSWORD.

@@ -1,5 +1,5 @@
-import { createContext, useContext, useReducer, useCallback } from 'react';
-import { useSocket, getSocket } from '../hooks/useSocket';
+import { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
+import { useSocket, getSocket, onConnectionChange } from '../hooks/useSocket';
 
 const AppContext = createContext(null);
 
@@ -16,7 +16,9 @@ const init = {
   leaderboard: [], toasts: [],
   currentQuestion: null, roundResult: null, announcement: null,
   audience_votes: {},
+  help_requests: [],
   showThankYou: false,
+  connected: true,
   passcodeCache: {}, // { team_id: passcode } — admin only, never wiped by state:sync
 };
 
@@ -137,6 +139,14 @@ function reducer(state, { type, payload }) {
     case 'SHOW_THANKYOU':
       return { ...state, showThankYou: true };
 
+    case 'CONNECTED':
+      return { ...state, connected: payload };
+
+    case 'HELP_NEW':
+      return { ...state, help_requests: [payload, ...state.help_requests.filter(h => h.id !== payload.id)] };
+    case 'HELP_RESOLVED':
+      return { ...state, help_requests: state.help_requests.filter(h => h.id !== payload.help_id) };
+
     default: return state;
   }
 }
@@ -195,14 +205,20 @@ export function AppProvider({ children }) {
     'admin:reset_complete':(d) => addToast({ message: d.message || '✅ Factory reset complete', type: 'success' }),
     'admin:rollback_complete':(d) => addToast({ message: `⏪ Rolled back to ${d.restored_phase}`, type: 'warning' }),
     'event:thankyou':      () => dispatch({ type: 'SHOW_THANKYOU' }),
+    'help:new':            (d) => dispatch({ type: 'HELP_NEW', payload: d }),
+    'help:resolved':       (d) => dispatch({ type: 'HELP_RESOLVED', payload: d }),
   });
+
+  useEffect(() => onConnectionChange((c) => dispatch({ type: 'CONNECTED', payload: c })), []);
 
   const emit = useCallback((event, data = {}) =>
     getSocket().emit(event, data)
   , []);
 
+  // Admin/zone-scoped events carry the session token obtained at login
+  // (see AdminDashboard / ZoneOperator) — never a hardcoded password.
   const adminEmit = useCallback((event, data = {}) =>
-    getSocket().emit(event, { ...data, admin_token: 'dominance2024' })
+    getSocket().emit(event, { ...data, admin_token: sessionStorage.getItem('admin_session') || '' })
   , []);
 
   return (

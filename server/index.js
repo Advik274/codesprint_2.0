@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -6,6 +7,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { writeFile } from 'fs/promises';
 import { registerSocketEvents } from './sockets/events.js';
 import { debounce } from './lib/utils.js';
+import { login, authAdmin } from './lib/auth.js';
+import { startSnapshots, listSnapshots, restoreSnapshot, snapshotNow, listArchives, readArchive } from './lib/snapshots.js';
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -86,6 +89,7 @@ export const EMPTY_DB = () => ({
   used_question_ids: [], used_zone_problem_ids: [],
   event_log: [],
   phase_history: [],  // V2: rollback snapshots
+  help_requests: [],  // { id, team_id, team_name, phase, message, created_at, resolved }
 });
 
 function patchDB() {
@@ -125,6 +129,7 @@ function patchDB() {
   if (s.speed_demo_order === undefined) s.speed_demo_order = [];
   if (s.speed_demo_done_ids === undefined) s.speed_demo_done_ids = [];
   if (!db.audience_votes) db.audience_votes = {};
+  if (!db.help_requests) db.help_requests = [];
   // V7: patch teams for quiz_score and phase3_group
   db.teams.forEach(t => {
     if (t.quiz_score === undefined) t.quiz_score = 0;
@@ -179,9 +184,20 @@ export async function saveDBNow() {
 setInterval(() => saveDB(), 30_000);
 
 loadDB();
+startSnapshots(db); // timestamped recovery point every 5 min
 
 // ── REST ────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ ok: true, phase: db.app_state?.current_phase }));
+
+// ── Auth ────────────────────────────────────────────────────────
+// Password is checked here, server-side, and never embedded in the client
+// bundle. Success returns a random session token used for everything else.
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body || {};
+  const result = login(password, req.ip);
+  if (!result.ok) return res.status(401).json({ error: result.message });
+  res.json({ token: result.token, role: result.role });
+});
 
 // V7: Passcode-only team lookup — replaces dropdown for 340+ teams
 app.get('/api/team-by-passcode/:code', (req, res) => {
@@ -211,15 +227,16 @@ app.get('/api/state', (_, res) => res.json({ app_state: db.app_state }));
 app.get('/api/teams', (_, res) => res.json(db.teams.map(({ id, name, color, year }) => ({ id, name, color, year }))));
 
 app.get('/api/admin/backup', (req, res) => {
-  if (req.headers['x-admin-token'] !== 'dominance2024') return res.status(401).json({ error: 'Unauthorized' });
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
   res.json({ db_json: JSON.stringify(db), teams_count: db.teams.length, zones_count: db.zones.length, phase: db.app_state.current_phase, timestamp: new Date().toISOString() });
 });
 
 app.post('/api/admin/restore', async (req, res) => {
-  if (req.headers['x-admin-token'] !== 'dominance2024') return res.status(401).json({ error: 'Unauthorized' });
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const restored = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
     if (!restored.teams || !restored.app_state) return res.status(400).json({ error: 'Invalid DB' });
+    snapshotNow(db); // keep whatever was live before this overwrite, just in case
     Object.assign(db, restored);
     patchDB();
     await saveDBNow();
@@ -228,9 +245,44 @@ app.post('/api/admin/restore', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// ── Snapshots — periodic local recovery points ────────────────────
+app.get('/api/admin/snapshots', (req, res) => {
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ snapshots: listSnapshots() });
+});
+
+app.post('/api/admin/snapshots/:filename/restore', async (req, res) => {
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    snapshotNow(db); // don't lose current state either
+    const restored = restoreSnapshot(req.params.filename);
+    Object.assign(db, restored);
+    patchDB();
+    await saveDBNow();
+    io.emit('state:sync', buildClientState(db));
+    res.json({ success: true, teams: db.teams.length, zones: db.zones.length });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Past-event archives (written automatically on Factory Reset) ──
+app.get('/api/admin/archives', (req, res) => {
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ archives: listArchives() });
+});
+
+app.get('/api/admin/archives/:filename', (req, res) => {
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const json = readArchive(req.params.filename);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+    res.send(json);
+  } catch (e) { res.status(404).json({ error: e.message }); }
+});
+
 // V7: Phase 3 CSV Export
 app.get('/api/admin/phase3-export', (req, res) => {
-  if (req.headers['x-admin-token'] !== 'dominance2024') return res.status(401).json({ error: 'Unauthorized' });
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
   const rows = [
     ['Team Name', 'Year', 'Group', 'Members', 'Problem', 'GitHub URL', 'Deploy URL', 'Notes', 'Judge Score', 'Submitted At']
   ];
@@ -302,5 +354,6 @@ export function buildClientState(db) {
     })),
     event_log: db.event_log.slice(0, 50),
     audience_votes: db.audience_votes || {},
+    help_requests: (db.help_requests || []).filter(h => !h.resolved),
   };
 }

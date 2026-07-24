@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSocket } from '../hooks/useSocket';
 import { useApp } from '../context/AppContext';
+import { ThemeToggle } from '../components/shared/index.jsx';
 
 export default function JoinTeam() {
   const { state } = useApp();
@@ -58,7 +59,8 @@ export default function JoinTeam() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 16, right: 16 }}><ThemeToggle /></div>
       <div style={{ width: '100%', maxWidth: 420 }}>
         <div style={{ textAlign: 'center', marginBottom: 40 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 700, color: 'var(--accent)', letterSpacing: '0.1em', animation: 'glitch 4s infinite' }}>
@@ -140,7 +142,8 @@ export default function JoinTeam() {
           )}
         </div>
 
-        <div style={{ textAlign: 'center', marginTop: 24, display: 'flex', gap: 24, justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', marginTop: 24, display: 'flex', gap: 24, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <a href="/guide" style={{ color: 'var(--accent)', fontSize: 12, fontFamily: 'var(--font-mono)', textDecoration: 'none' }}>HOW IT WORKS</a>
           <a href="/spectator" style={{ color: 'var(--text3)', fontSize: 12, fontFamily: 'var(--font-mono)', textDecoration: 'none' }}>VIEW LEADERBOARD</a>
           <a href="/admin" style={{ color: 'var(--text3)', fontSize: 12, fontFamily: 'var(--font-mono)', textDecoration: 'none' }}>ADMIN</a>
         </div>

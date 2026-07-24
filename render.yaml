@@ -10,4 +10,8 @@ services:
         value: production
       - key: PORT
         generateValue: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ZONE_PASSWORD
+        sync: false
     plan: free

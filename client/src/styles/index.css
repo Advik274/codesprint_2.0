@@ -192,3 +192,140 @@ input:focus, select:focus, textarea:focus {
 
 /* ── Sprint 4: Ticker scrollbar hide ────────────── */
 .ticker-track::-webkit-scrollbar { display: none; }
+
+/* ── Light theme override ────────────────────────
+   Dark is the default look (matches prefers-color-scheme); the toggle
+   stamps data-theme="light" on <html> to opt into this instead. */
+:root[data-theme="light"] {
+  --bg: #f4f5f9;
+  --bg2: #ffffff;
+  --bg3: #edeff5;
+  --border: #dde1ea;
+  --border2: #c7cddb;
+  --text: #15151f;
+  --text2: #47475a;
+  --text3: #85859c;
+  --accent: #00a862;
+  --accent2: #00915a;
+  --danger: #d81b46;
+  --warning: #ad6800;
+  --info: #0072cc;
+  --purple: #7c3aed;
+}
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,168,98,0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 50% at 80% 80%, rgba(0,114,204,0.05) 0%, transparent 60%);
+}
+
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Connection banner ────────────────────────────── */
+.conn-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 2000;
+  background: var(--danger); color: #fff; text-align: center;
+  font-family: var(--font-mono); font-size: 12px; padding: 7px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+
+/* ── Need Help floating button ────────────────────── */
+.help-fab {
+  position: fixed; bottom: 22px; right: 20px; z-index: 400;
+  padding: 12px 18px; border-radius: 30px;
+  background: var(--warning); color: #000; font-size: 13px;
+  display: flex; align-items: center; gap: 8px;
+  box-shadow: 0 4px 18px rgba(255,170,0,0.45);
+  border: none; cursor: pointer;
+  font-family: var(--font-display); font-weight: 700; letter-spacing: 0.06em;
+}
+.help-fab:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Sound mute toggle ─────────────────────────────── */
+.sound-toggle {
+  background: var(--bg2); border: 1px solid var(--border2); border-radius: 20px;
+  padding: 6px 14px; font-size: 13px; color: var(--text2); cursor: pointer;
+  font-family: var(--font-mono);
+}
+.sound-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Printable passcode cards ──────────────────────── */
+.passcode-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.passcode-card {
+  border: 2px dashed var(--border2);
+  border-radius: 10px;
+  padding: 20px 14px;
+  text-align: center;
+  background: var(--bg2);
+  page-break-inside: avoid;
+}
+.passcode-card-name { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: 0.04em; }
+.passcode-card-year { font-family: var(--font-mono); font-size: 11px; color: var(--text3); margin-top: 2px; }
+.passcode-card-code { font-family: var(--font-mono); font-size: 34px; font-weight: 700; letter-spacing: 0.28em; margin: 12px 0 4px; color: var(--text); }
+.passcode-card-hint { font-family: var(--font-mono); font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.1em; }
+
+/* ── Random meme popup ───────────────────────────────────────────── */
+@keyframes memeSlideIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.meme-popup {
+  position: fixed;
+  left: 20px;
+  bottom: 22px;
+  z-index: 450;
+  max-width: 340px;
+  background: var(--bg2);
+  border: 1px solid rgba(170,85,255,0.35);
+  border-radius: 10px;
+  padding: 16px 34px 16px 18px;
+  box-shadow: 0 8px 28px rgba(170,85,255,0.15);
+  animation: memeSlideIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}
+.meme-popup-label {
+  font-family: var(--font-mono); font-size: 10px; color: var(--purple);
+  letter-spacing: 0.15em; margin-bottom: 8px; opacity: 0.8;
+}
+.meme-popup-setup {
+  font-family: var(--font-mono); font-size: 12px; color: var(--text2);
+  margin-bottom: 6px; line-height: 1.5;
+}
+.meme-popup-line {
+  font-family: var(--font-body); font-size: 14px; color: var(--text);
+  line-height: 1.55;
+}
+.meme-popup-close {
+  position: absolute; top: 8px; right: 8px;
+  background: none; border: none; color: var(--text3);
+  font-size: 16px; cursor: pointer; padding: 2px 6px; min-width: auto;
+}
+.meme-popup-close:hover { color: var(--purple); }
+
+@media (max-width: 520px) {
+  .meme-popup { left: 12px; right: 12px; bottom: 84px; max-width: none; }
+}
+
+/* ── Print ─────────────────────────────────────────── */
+@media print {
+  nav, .no-print, .help-fab, .conn-banner { display: none !important; }
+  body { background: #fff !important; }
+  body::before { display: none !important; }
+  .card, .card-lg { box-shadow: none !important; }
+  .passcode-card { background: #fff !important; border-color: #999 !important; }
+  .passcode-card-name, .passcode-card-code { color: #000 !important; }
+}

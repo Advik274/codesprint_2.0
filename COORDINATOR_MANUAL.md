@@ -12,7 +12,8 @@
 | Max Participants | 200 (40–50 teams of 3–5) |
 | Phases | Up to 4 (Gauntlet → Campus Conquest → Final Build → Speed Demo) |
 | Tech Required | 1 Admin laptop, 6+ Zone laptops, participant phones |
-| Admin Token | `dominance2024` |
+| Admin Password | set via `ADMIN_PASSWORD` env var (see server/.env.example) |
+| Zone Password | set via `ZONE_PASSWORD` env var — give this to Zone Operators instead |
 | URLs | See Section 6 |
 
 ---
@@ -62,7 +63,7 @@ Votes are normalised (top vote-getter = 100%), then scaled by weight. Example: t
 ### Technical Setup
 1. Deploy the app (see Section 7 — Railway deployment)
 2. Note the live URL (e.g., `https://dominance-xxx.railway.app`)
-3. Test admin panel login — token: `dominance2024`
+3. Test admin panel login — password: whatever you set as ADMIN_PASSWORD
 4. Open `/spectator` on projector browser — full screen
 
 ### Team Registration (Admin → Setup tab)
@@ -80,7 +81,7 @@ Votes are normalised (top vote-getter = 100%), then scaled by weight. Example: t
 1. Add all 6 zones with name + location description
 2. Note each Zone ID (e.g., `zone_a1b2c3`)
 3. Send each Zone Operator their Zone URL: `https://[APP_URL]/zone/[ZONE_ID]`
-4. Zone Operators open their URL and enter admin token `dominance2024`
+4. Zone Operators open their URL and enter the ZONE_PASSWORD (not the admin password)
 5. Verify each zone laptop shows "READY FOR TEAMS"
 
 ### Checklist Before Starting
@@ -242,7 +243,7 @@ Their laptop shows a zone operator screen. Flow:
 | Spectator | `https://[APP_URL]/spectator` |
 | Zone Laptop | `https://[APP_URL]/zone/[ZONE_ID]` |
 
-Admin token: `dominance2024`
+Admin/zone passwords: whatever you set as ADMIN_PASSWORD / ZONE_PASSWORD.
 
 ---
 

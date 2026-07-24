@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getSocket } from '../hooks/useSocket';
+import { getSocket, onSocketReconnect } from '../hooks/useSocket';
 import { useApp } from '../context/AppContext';
+import { ThemeToggle } from '../components/shared/index.jsx';
+
+function zoneToken() { return sessionStorage.getItem('admin_session') || ''; }
 
 export default function ZoneOperator() {
   const { zoneId } = useParams();
   const { state } = useApp();
   const navigate = useNavigate();
+  const [authed, setAuthed] = useState(() => !!sessionStorage.getItem('admin_session'));
+  const [pin, setPin] = useState('');
+  const [loginErr, setLoginErr] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
   const [phase, setPhase] = useState('idle'); // idle | select_problem | challenge | result
   const [zone, setZone] = useState(null);
   const [problem, setProblem] = useState(null);
@@ -24,6 +31,24 @@ export default function ZoneOperator() {
   const timerRef = useRef(null);
   const answerRef = useRef(null);
 
+  const doLogin = async () => {
+    if (!pin || loggingIn) return;
+    setLoggingIn(true); setLoginErr('');
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setLoginErr(data.error || 'Login failed'); setLoggingIn(false); return; }
+      sessionStorage.setItem('admin_session', data.token);
+      sessionStorage.setItem('admin_role', data.role);
+      setAuthed(true);
+    } catch {
+      setLoginErr('Connection error — try again.');
+    }
+    setLoggingIn(false);
+  };
+
   // Sync zone from global state
   useEffect(() => {
     if (state.showThankYou) navigate('/thankyou');
@@ -35,8 +60,14 @@ export default function ZoneOperator() {
   }, [state.zones, zoneId]);
 
   useEffect(() => {
+    if (!authed) return;
     const socket = getSocket();
-    socket.emit('zone:operator_join', { zone_id: zoneId, admin_token: 'dominance2024' });
+    socket.emit('zone:operator_join', { zone_id: zoneId, admin_token: zoneToken() });
+    // A dropped WiFi connection is common on event hotspots — rejoin the zone
+    // room automatically on reconnect instead of silently going stale.
+    const unsub = onSocketReconnect(() => {
+      socket.emit('zone:operator_join', { zone_id: zoneId, admin_token: zoneToken() });
+    });
 
     socket.on('zone:operator_ready', ({ zone: z, message }) => {
       if (z) setZone(z);
@@ -102,8 +133,9 @@ export default function ZoneOperator() {
       socket.off('zone:capture_result');
       socket.off('zone:error');
       clearInterval(timerRef.current);
+      unsub();
     };
-  }, [zoneId]);
+  }, [zoneId, authed]);
 
   const resetToIdle = () => {
     setPhase('idle'); setTeamInfo(null); setProblem(null); setProblemOptions([]);
@@ -115,21 +147,21 @@ export default function ZoneOperator() {
   const handleTeamArrive = () => {
     if (!passcode.trim()) return;
     setError('');
-    getSocket().emit('zone:team_arrive', { zone_id: zoneId, team_passcode: passcode.trim(), admin_token: 'dominance2024' });
+    getSocket().emit('zone:team_arrive', { zone_id: zoneId, team_passcode: passcode.trim(), admin_token: zoneToken() });
     setPasscode('');
   };
 
   const selectProblem = (problemId) => {
-    getSocket().emit('zone:select_problem', { zone_id: zoneId, problem_id: problemId, admin_token: 'dominance2024' });
+    getSocket().emit('zone:select_problem', { zone_id: zoneId, problem_id: problemId, admin_token: zoneToken() });
   };
 
   const submitAnswer = () => {
     if (!answer.trim()) return;
-    getSocket().emit('zone:submit_answer', { zone_id: zoneId, answer: answer.trim(), admin_token: 'dominance2024' });
+    getSocket().emit('zone:submit_answer', { zone_id: zoneId, answer: answer.trim(), admin_token: zoneToken() });
   };
 
   const cancelAttempt = () => {
-    getSocket().emit('zone:cancel_attempt', { zone_id: zoneId, admin_token: 'dominance2024' });
+    getSocket().emit('zone:cancel_attempt', { zone_id: zoneId, admin_token: zoneToken() });
     resetToIdle();
   };
 
@@ -141,6 +173,18 @@ export default function ZoneOperator() {
 
   const typeColors = { debugging: 'var(--danger)', output_trace: 'var(--warning)', team_logic: 'var(--info)', cipher: 'var(--purple)', sql_logic: 'var(--accent)' };
 
+  if (!authed) return (
+    <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div className="card card-lg" style={{ maxWidth:340, width:'90%', textAlign:'center' }}>
+        <div style={{ fontFamily:'var(--font-display)', fontSize:24, color:'var(--accent)', marginBottom:4 }}>ZONE OPERATOR</div>
+        <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginBottom:20 }}>{zoneId}</div>
+        <input value={pin} onChange={e=>setPin(e.target.value)} placeholder="Zone password" type="password" onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{ textAlign:'center', marginBottom:12 }} autoFocus/>
+        <button className="btn-primary" onClick={doLogin} disabled={!pin||loggingIn} style={{ width:'100%' }}>{loggingIn?'Checking...':'Enter'}</button>
+        {loginErr&&<div style={{ color:'var(--danger)', marginTop:8, fontSize:13 }}>{loginErr}</div>}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', padding: 0, background: 'var(--bg)' }}>
 
@@ -151,7 +195,7 @@ export default function ZoneOperator() {
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--accent)', letterSpacing: '0.08em' }}>{zone?.name || zoneId}</div>
           {zone?.location && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>{zone.location}</div>}
         </div>
-        <div style={{ textAlign: 'right' }}>
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 12 }}>
           {zone?.owner_team_id ? (
             <div style={{ padding: '4px 14px', borderRadius: 4, background: `${zone.owner_color}22`, border: `1px solid ${zone.owner_color}66`, color: zone.owner_color, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
               🏴 {zone.owner_name}
@@ -159,6 +203,7 @@ export default function ZoneOperator() {
           ) : (
             <div className="badge badge-info">NEUTRAL</div>
           )}
+          <ThemeToggle />
         </div>
       </div>
 

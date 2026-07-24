@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Navbar, ToastContainer, BatteryBar, CountdownTimer } from '../components/shared/index.jsx';
 import { Phase1Leaderboard } from '../components/phase1/index.jsx';
 import { getSocket } from '../hooks/useSocket';
+import { useSound } from '../hooks/useSound';
 
 const PROBLEMS = [
   'Build a real-time feedback portal where users submit ratings and see live averages.',
@@ -17,9 +18,13 @@ const PROBLEMS = [
 
 export default function AdminDashboard() {
   const { state, adminEmit: emit, addToast } = useApp();
-  // Persist auth across refreshes using localStorage — cookie-style persistence
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem('admin_authed') === '1');
+  // Persist auth across refreshes using sessionStorage — a real server session
+  // token, not the password itself (see /api/admin/login in server/index.js).
+  const [authed, setAuthed] = useState(() =>
+    sessionStorage.getItem('admin_authed') === '1' && sessionStorage.getItem('admin_role') === 'admin');
   const [pin, setPin] = useState('');
+  const [loginErr, setLoginErr] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
   const [tab, setTab] = useState('setup');
 
   const [teamName, setTeamName] = useState('');
@@ -102,16 +107,46 @@ export default function AdminDashboard() {
   // MUST be before any early return — React rules of hooks forbid hooks after a conditional return
   useEffect(() => {
     if (!authed) return;
-    getSocket().emit('admin:request_passcodes', { admin_token: 'dominance2024' });
+    getSocket().emit('admin:request_passcodes', { admin_token: sessionStorage.getItem('admin_session') || '' });
   }, [authed]);
+
+  // Alert chime whenever a new help request comes in — most important thing
+  // an admin needs to notice while heads-down in another tab.
+  const { play: playSound } = useSound();
+  const prevHelpCount = useRef(0);
+  useEffect(() => {
+    const count = (state.help_requests || []).length;
+    if (authed && count > prevHelpCount.current) playSound('alert');
+    prevHelpCount.current = count;
+  }, [state.help_requests, authed]);
+
+  const doLogin = async () => {
+    if (!pin || loggingIn) return;
+    setLoggingIn(true); setLoginErr('');
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setLoginErr(data.error || 'Login failed'); setLoggingIn(false); return; }
+      if (data.role !== 'admin') { setLoginErr('That\'s the zone-operator password — full admin access needs the admin password.'); setLoggingIn(false); return; }
+      sessionStorage.setItem('admin_session', data.token);
+      sessionStorage.setItem('admin_role', data.role);
+      sessionStorage.setItem('admin_authed', '1');
+      setAuthed(true);
+    } catch (e) {
+      setLoginErr('Connection error — try again.');
+    }
+    setLoggingIn(false);
+  };
 
   if (!authed) return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
       <div className="card card-lg" style={{ maxWidth:340, width:'90%', textAlign:'center' }}>
         <div style={{ fontFamily:'var(--font-display)', fontSize:28, color:'var(--accent)', marginBottom:20 }}>ADMIN ACCESS</div>
-        <input value={pin} onChange={e=>setPin(e.target.value)} placeholder="Admin token" type="password" onKeyDown={e=>{ if(e.key==='Enter' && pin==='dominance2024'){ sessionStorage.setItem('admin_authed','1'); setAuthed(true); }}} style={{ textAlign:'center', marginBottom:12 }}/>
-        <button className="btn-primary" onClick={()=>{ if(pin==='dominance2024'){ sessionStorage.setItem('admin_authed','1'); setAuthed(true); }}} style={{ width:'100%' }}>Enter</button>
-        {pin&&pin!=='dominance2024'&&<div style={{ color:'var(--danger)', marginTop:8, fontSize:13 }}>Wrong token</div>}
+        <input value={pin} onChange={e=>setPin(e.target.value)} placeholder="Admin password" type="password" onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{ textAlign:'center', marginBottom:12 }} autoFocus/>
+        <button className="btn-primary" onClick={doLogin} disabled={!pin||loggingIn} style={{ width:'100%' }}>{loggingIn?'Checking...':'Enter'}</button>
+        {loginErr&&<div style={{ color:'var(--danger)', marginTop:8, fontSize:13 }}>{loginErr}</div>}
       </div>
     </div>
   );
@@ -180,7 +215,8 @@ export default function AdminDashboard() {
     { key:'questions', label:`❓ Questions (${(state.app_state?.event_config?.custom_questions||[]).length})` },
     { key:'phase3',    label:'🏗️ Phase 3' },
     { key:'demo',      label:'🎤 Demo' },
-    { key:'qr',        label:'📱 QR Codes' },
+    { key:'analytics', label:'📈 Analytics' },
+    { key:'qr',        label:'📱 QR & Cards' },
     { key:'results',   label:'🏆 Results' },
     { key:'backup',    label:'💾 Backup' },
     { key:'danger',    label:'⚠️ Reset' },
@@ -337,6 +373,28 @@ export default function AdminDashboard() {
         {/* ── CONTROL ───────────────────────────────────────────── */}
         {tab==='control'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+
+            {/* ── HELP REQUESTS — always visible at top ── */}
+            {(state.help_requests||[]).length > 0 && (
+              <div style={{ border:'2px solid var(--warning)', borderRadius:8, padding:'14px 20px', background:'rgba(255,170,0,0.08)' }}>
+                <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:'var(--warning)', marginBottom:10 }}>
+                  🆘 {state.help_requests.length} TEAM{state.help_requests.length!==1?'S':''} NEED HELP
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {state.help_requests.map(h=>(
+                    <div key={h.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
+                      <div style={{ width:8, height:8, borderRadius:'50%', background:h.team_color }}/>
+                      <div style={{ flex:1 }}>
+                        <span style={{ fontFamily:'var(--font-display)', fontSize:14 }}>{h.team_name}</span>
+                        <span style={{ marginLeft:8, fontSize:11, color:'var(--text3)' }}>{h.phase} · {new Date(h.created_at).toLocaleTimeString()}</span>
+                        {h.message && <div style={{ fontSize:12, color:'var(--text2)', marginTop:2 }}>{h.message}</div>}
+                      </div>
+                      <button className="btn-primary" onClick={()=>emit('admin:resolve_help',{help_id:h.id})} style={{ padding:'6px 14px', fontSize:12 }}>✓ Resolved</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* ── EMERGENCY PAUSE — always visible at top ── */}
             {state.app_state.master_paused ? (
@@ -507,6 +565,9 @@ export default function AdminDashboard() {
                     {z.is_attempting&&<div style={{ fontSize:12, color:'var(--warning)', marginTop:2 }}>⚡ {z.attempting_team_name} is attempting...</div>}
                   </div>
                   <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    {z.is_attempting && (
+                      <button className="btn-ghost" onClick={()=>{ if(confirm(`Clear the stuck attempt on "${z.name}"? Refunds ${z.attempting_team_name}'s attempt cost. Ownership/defense stay untouched — use this instead of full Reset when a zone laptop dies mid-attempt.`)) emit('admin:clear_zone_pending',{zone_id:z.id}); }} style={{ padding:'4px 10px', fontSize:11, color:'var(--warning)', borderColor:'var(--warning)' }}>🧹 Clear Stuck</button>
+                    )}
                     <button className="btn-ghost" onClick={()=>{ if(confirm(`Reset "${z.name}" to neutral? This removes the current owner.`)) emit('admin:reset_zone',{zone_id:z.id}); }} style={{ padding:'4px 10px', fontSize:11 }}>Reset</button>
                     <span className={`badge ${z.owner_team_id?'badge-success':z.is_attempting?'badge-warning':'badge-info'}`}>{z.owner_team_id?'CAPTURED':z.is_attempting?'BUSY':'NEUTRAL'}</span>
                   </div>
@@ -668,7 +729,7 @@ export default function AdminDashboard() {
                   />
                   <button className="btn-danger" onClick={()=>{
                     if(confirm(`Eliminate the bottom ${quizElimCount} team(s) by quiz score? This cannot be undone.`))
-                      emit('admin:quiz_eliminate',{eliminate_count:quizElimCount,admin_token:'dominance2024'});
+                      emit('admin:quiz_eliminate',{eliminate_count:quizElimCount});
                   }} disabled={state.app_state.current_phase!=='quiz_round'}>
                     💀 Eliminate Bottom {quizElimCount}
                   </button>
@@ -804,7 +865,7 @@ export default function AdminDashboard() {
                 <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--info)' }}>ASSIGN PROBLEMS</h3>
                 {/* CSV Export */}
                 <button onClick={()=>{
-                  fetch('/api/admin/phase3-export', { headers:{ 'x-admin-token':'dominance2024' }})
+                  fetch('/api/admin/phase3-export', { headers:{ 'x-admin-token': sessionStorage.getItem('admin_session')||'' }})
                     .then(r=>r.blob()).then(blob=>{
                       const url=URL.createObjectURL(blob);
                       const a=document.createElement('a'); a.href=url; a.download='phase3_submissions.csv'; a.click();
@@ -940,6 +1001,10 @@ export default function AdminDashboard() {
           <DemoTab state={state} emit={emit} />
         )}
 
+        {tab==='analytics'&&(
+          <AnalyticsTab state={state} />
+        )}
+
         {tab==='qr'&&(
           <QRTab state={state} />
         )}
@@ -1036,7 +1101,7 @@ export default function AdminDashboard() {
               </p>
               <button className="btn-primary" style={{ width:'100%', padding:12 }} onClick={async()=>{
                 try {
-                  const res = await fetch('/api/admin/backup',{headers:{'x-admin-token':'dominance2024'}});
+                  const res = await fetch('/api/admin/backup',{headers:{'x-admin-token': sessionStorage.getItem('admin_session')||''}});
                   const data = await res.json();
                   await navigator.clipboard.writeText(data.db_json);
                   alert(`✅ Backup copied!\nTeams: ${data.teams_count} | Zones: ${data.zones_count} | Phase: ${data.phase}\n\nPaste as DB_BACKUP in Railway variables before redeploying.`);
@@ -1073,7 +1138,7 @@ export default function AdminDashboard() {
                 <button className="btn-primary" style={{ width:'100%', padding:14, fontSize:15 }}
                   onClick={async ()=>{
                     try {
-                      const res = await fetch('/api/admin/backup', { headers:{'x-admin-token':'dominance2024'} });
+                      const res = await fetch('/api/admin/backup', { headers:{'x-admin-token': sessionStorage.getItem('admin_session')||''} });
                       const data = await res.json();
                       // Copy db_json to clipboard
                       await navigator.clipboard.writeText(data.db_json);
@@ -1085,7 +1150,7 @@ export default function AdminDashboard() {
                 <button className="btn-ghost" style={{ width:'100%', padding:12, fontSize:13 }}
                   onClick={async ()=>{
                     try {
-                      const res = await fetch('/api/admin/backup', { headers:{'x-admin-token':'dominance2024'} });
+                      const res = await fetch('/api/admin/backup', { headers:{'x-admin-token': sessionStorage.getItem('admin_session')||''} });
                       const data = await res.json();
                       const blob = new Blob([data.db_json], { type:'application/json' });
                       const url = URL.createObjectURL(blob);
@@ -1111,7 +1176,7 @@ export default function AdminDashboard() {
                   if (!val) { alert('Paste backup JSON first'); return; }
                   if (!confirm('This will overwrite ALL current data. Continue?')) return;
                   try {
-                    const res = await fetch('/api/admin/restore', { method:'POST', headers:{'Content-Type':'application/json','x-admin-token':'dominance2024'}, body: val });
+                    const res = await fetch('/api/admin/restore', { method:'POST', headers:{'Content-Type':'application/json','x-admin-token': sessionStorage.getItem('admin_session')||''}, body: val });
                     const data = await res.json();
                     if (data.success) alert(`✅ Restored!\nTeams: ${data.teams}\nZones: ${data.zones}\nPhase: ${data.phase}`);
                     else alert('Error: ' + JSON.stringify(data));
@@ -1138,6 +1203,8 @@ export default function AdminDashboard() {
                 ))}
               </div>
             </div>
+
+            <SnapshotsAndArchives />
           </div>
         )}
 
@@ -1358,11 +1425,163 @@ function DemoTab({ state, emit }) {
   );
 }
 
+// Mirrors server/lib/utils.js normalizeAnswer() — kept in sync so the
+// Analytics tab's "correct rate" reflects the same lenient grading the
+// server actually used when scoring the quiz round.
+function normalizeAnswerForDisplay(raw) {
+  if (raw === null || raw === undefined) return '';
+  return String(raw)
+    .replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([|:,=<>+\-*/])\s*/g, '$1')
+    .trim()
+    .replace(/[.;]+$/, '');
+}
+
+// ── Analytics Tab ─────────────────────────────────────────────────
+// Everything here is derived from state already held in memory (event_log,
+// team scores, quiz answers) — no extra server-side tracking needed.
+function AnalyticsTab({ state }) {
+  const teams = state.teams || [];
+  const zones = state.zones || [];
+  const log = state.event_log || [];
+
+  // ── Gauntlet round difficulty ──
+  const roundStats = {};
+  teams.forEach(t => {
+    (t.phase1_scores || []).forEach(s => {
+      const r = roundStats[s.round] || (roundStats[s.round] = { round: s.round, attempts: 0, correct: 0, totalTime: 0 });
+      r.attempts += 1;
+      if (s.correct) { r.correct += 1; r.totalTime += s.time_taken_ms || 0; }
+    });
+  });
+  const roundRows = Object.values(roundStats)
+    .map(r => ({ ...r, correctRate: r.attempts ? Math.round((r.correct / r.attempts) * 100) : 0, avgTimeS: r.correct ? Math.round(r.totalTime / r.correct / 100) / 10 : null }))
+    .sort((a, b) => a.round - b.round);
+
+  // ── Zone contest stats (parsed from the event log) ──
+  const zoneStats = zones.map(z => {
+    let attempts = 0, fails = 0, captures = 0;
+    log.forEach(e => {
+      if (!e.message?.includes(z.name)) return;
+      if (e.type === 'zone_attempt') attempts += 1;
+      else if (e.type === 'zone_fail') fails += 1;
+      else if (e.type === 'zone_captured') captures += 1;
+    });
+    return { name: z.name, attempts, fails, captures, failRate: attempts ? Math.round((fails / attempts) * 100) : 0 };
+  }).filter(z => z.attempts > 0).sort((a, b) => b.failRate - a.failRate);
+
+  // ── Quiz per-question difficulty ──
+  const quizQuestions = state.app_state?.quiz_questions || [];
+  const memberAnswers = state.app_state?.quiz_member_answers || {};
+  const quizRows = quizQuestions.map(q => {
+    let total = 0, correct = 0;
+    Object.values(memberAnswers).forEach(members => {
+      Object.values(members).forEach(answers => {
+        if (answers[q.id] === undefined) return;
+        total += 1;
+        // Mirror the server's lenient grading (server/lib/utils.js) so this
+        // stat matches what teams were actually scored on, not a stricter
+        // exact-match approximation.
+        if (normalizeAnswerForDisplay(answers[q.id]) === normalizeAnswerForDisplay(q.answer)) correct += 1;
+      });
+    });
+    return { question: q.question, total, correct, correctRate: total ? Math.round((correct / total) * 100) : null };
+  }).filter(q => q.total > 0).sort((a, b) => a.correctRate - b.correctRate);
+
+  const activeCount = teams.filter(t => !t.is_eliminated).length;
+  const helpCount = (state.help_requests || []).length;
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:10 }}>
+        {[
+          ['Teams', teams.length, 'var(--text2)'],
+          ['Active', activeCount, 'var(--accent)'],
+          ['Zones Contested', zoneStats.length, 'var(--warning)'],
+          ['Open Help Requests', helpCount, helpCount>0?'var(--danger)':'var(--text3)'],
+        ].map(([l,v,c])=>(
+          <div key={l} className="card" style={{ textAlign:'center', padding:14 }}>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:26, fontWeight:700, color:c }}>{v}</div>
+            <div style={{ fontSize:10, color:'var(--text3)', marginTop:4, textTransform:'uppercase' }}>{l}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, marginBottom:12 }}>GAUNTLET ROUND DIFFICULTY</h3>
+        {roundRows.length===0 ? <div style={{ color:'var(--text3)', fontSize:12, fontFamily:'var(--font-mono)' }}>No Phase 1 attempts yet.</div> : (
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {roundRows.map(r=>(
+              <div key={r.round} style={{ display:'flex', alignItems:'center', gap:12, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:12, width:70 }}>Round {r.round}</div>
+                <div style={{ flex:1, height:8, borderRadius:4, background:'var(--bg)', overflow:'hidden' }}>
+                  <div style={{ height:'100%', width:`${r.correctRate}%`, background: r.correctRate<40?'var(--danger)':r.correctRate<70?'var(--warning)':'var(--accent)', borderRadius:4 }}/>
+                </div>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:12, width:110, textAlign:'right' }}>{r.correctRate}% correct · {r.attempts} tries</div>
+                {r.avgTimeS!==null && <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', width:70, textAlign:'right' }}>{r.avgTimeS}s avg</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, marginBottom:12 }}>HARDEST ZONES (by fail rate)</h3>
+        {zoneStats.length===0 ? <div style={{ color:'var(--text3)', fontSize:12, fontFamily:'var(--font-mono)' }}>No zone attempts yet.</div> : (
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {zoneStats.map(z=>(
+              <div key={z.name} style={{ display:'flex', alignItems:'center', gap:12, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
+                <div style={{ flex:1, fontFamily:'var(--font-mono)', fontSize:12 }}>{z.name}</div>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>{z.captures} captured</div>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:12, width:110, textAlign:'right', color: z.failRate>50?'var(--danger)':'var(--text2)' }}>{z.failRate}% fail · {z.attempts} tries</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, marginBottom:12 }}>QUIZ QUESTIONS — HARDEST FIRST</h3>
+        {quizRows.length===0 ? <div style={{ color:'var(--text3)', fontSize:12, fontFamily:'var(--font-mono)' }}>No quiz answers yet.</div> : (
+          <div style={{ display:'flex', flexDirection:'column', gap:6, maxHeight:400, overflowY:'auto' }}>
+            {quizRows.map((q,i)=>(
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
+                <div style={{ flex:1, fontSize:12, color:'var(--text2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{q.question}</div>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:12, width:120, textAlign:'right', color: q.correctRate<40?'var(--danger)':q.correctRate<70?'var(--warning)':'var(--accent)' }}>{q.correctRate}% correct · {q.total} ans</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── QR code image — generated fully client-side (offline-capable) ──
+// The old version called api.qrserver.com over the internet, which defeats
+// the point on a local-hotspot deployment with no internet (see README).
+function QRImage({ text, size = 160 }) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    import('qrcode').then(QRCode => {
+      QRCode.toDataURL(text, { width: size, margin: 1, color: { dark: '#000000', light: '#ffffff' } })
+        .then(url => { if (!cancelled) setSrc(url); })
+        .catch(() => {});
+    });
+    return () => { cancelled = true; };
+  }, [text, size]);
+  if (!src) return <div style={{ width: size, height: size, background: '#fff', borderRadius: 8, margin: '10px auto 8px' }} />;
+  return <img src={src} alt="" width={size} height={size} style={{ borderRadius: 8, background: 'white', padding: 6, display: 'block', margin: '10px auto 8px' }} />;
+}
+
 // ── QR Tab Component ─────────────────────────────────────────────
 function QRTab({ state }) {
   const base = window.location.origin;
-  const qrUrl = (path) =>
-    `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(base + path)}`;
+  const passcodeCache = state.passcodeCache || {};
+  const [section, setSection] = useState('qr'); // 'qr' | 'cards'
 
   const cards = [
     { label: 'Team Join', path: '/', color: 'var(--accent)', icon: '🎯' },
@@ -1374,36 +1593,68 @@ function QRTab({ state }) {
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-      <div className="card" style={{ border:'1px solid var(--info)', padding:'14px 18px' }}>
-        <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>
-          Base URL: <span style={{ color:'var(--accent)' }}>{base}</span>
-          <span style={{ marginLeft:12, color:'var(--text3)' }}>· Print these and post at each station</span>
-        </div>
-      </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(210px,1fr))', gap:14 }}>
-        {cards.map((c, i) => (
-          <div key={i} className="card" style={{ textAlign:'center', border:`1px solid ${c.color}44`, padding:18 }}>
-            <div style={{ fontFamily:'var(--font-display)', fontSize:14, color:c.color, marginBottom:2 }}>
-              {c.icon} {c.label}
-            </div>
-            {c.sublabel && (
-              <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginBottom:8 }}>{c.sublabel}</div>
-            )}
-            <img
-              src={qrUrl(c.path)}
-              alt={c.label}
-              width={160} height={160}
-              style={{ borderRadius:8, background:'white', padding:6, display:'block', margin:'10px auto 8px' }}
-            />
-            <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', wordBreak:'break-all' }}>
-              {base}{c.path}
-            </div>
-          </div>
+      <div className="no-print" style={{ display:'flex', gap:8 }}>
+        {[['qr','📱 QR Codes'],['cards','🪪 Passcode Cards']].map(([k,l])=>(
+          <button key={k} onClick={()=>setSection(k)} style={{ padding:'8px 16px', borderRadius:6, fontSize:12,
+            background: section===k?'var(--bg3)':'transparent', border:`1px solid ${section===k?'var(--border2)':'transparent'}`,
+            color: section===k?'var(--text)':'var(--text3)' }}>{l}</button>
         ))}
       </div>
-      <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', textAlign:'center' }}>
-        QR codes update automatically when zones are added. Use browser Print (Ctrl+P) to print this tab.
-      </div>
+
+      {section==='qr' && (
+        <>
+          <div className="card no-print" style={{ border:'1px solid var(--info)', padding:'14px 18px' }}>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>
+              Base URL: <span style={{ color:'var(--accent)' }}>{base}</span>
+              <span style={{ marginLeft:12, color:'var(--text3)' }}>· Generated offline — works with no internet on a local hotspot</span>
+            </div>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(210px,1fr))', gap:14 }}>
+            {cards.map((c, i) => (
+              <div key={i} className="card" style={{ textAlign:'center', border:`1px solid ${c.color}44`, padding:18 }}>
+                <div style={{ fontFamily:'var(--font-display)', fontSize:14, color:c.color, marginBottom:2 }}>
+                  {c.icon} {c.label}
+                </div>
+                {c.sublabel && (
+                  <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginBottom:8 }}>{c.sublabel}</div>
+                )}
+                <QRImage text={base + c.path} />
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', wordBreak:'break-all' }}>
+                  {base}{c.path}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="no-print" style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', textAlign:'center' }}>
+            QR codes update automatically when zones are added. Use browser Print (Ctrl+P) to print this tab.
+          </div>
+        </>
+      )}
+
+      {section==='cards' && (
+        <>
+          <div className="card no-print" style={{ border:'1px solid var(--accent)', padding:'14px 18px' }}>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>
+              {state.teams.length} team{state.teams.length!==1?'s':''} · Print (Ctrl+P) and cut along the card borders for the registration desk.
+            </div>
+          </div>
+          <div className="passcode-cards">
+            {state.teams.map(t => (
+              <div key={t.id} className="passcode-card" style={{ borderColor: t.color }}>
+                <div className="passcode-card-name" style={{ color: t.color }}>{t.name}</div>
+                <div className="passcode-card-year">{t.year} Year</div>
+                <div className="passcode-card-code">{passcodeCache[t.id] || '····'}</div>
+                <div className="passcode-card-hint">team passcode — keep private</div>
+              </div>
+            ))}
+          </div>
+          {state.teams.length===0 && (
+            <div style={{ textAlign:'center', padding:32, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
+              No teams registered yet.
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1618,6 +1869,117 @@ function ConfigTab({ state, emit }) {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Snapshots + Past-Event Archives ────────────────────────────────
+// Snapshots are an automatic local safety net (every 5 min, plus before any
+// restore/reset) against a corrupted write or a fat-fingered admin action.
+// Archives are a full copy of a completed event saved automatically when
+// Factory Reset runs, so results aren't lost when the DB is wiped for the
+// next run. Note: on hosts with an ephemeral disk (e.g. Render free tier)
+// both live only as long as the container does — download anything you
+// want to keep before a redeploy.
+function SnapshotsAndArchives() {
+  const authHeader = () => ({ 'x-admin-token': sessionStorage.getItem('admin_session') || '' });
+  const [snapshots, setSnapshots] = useState([]);
+  const [archives, setArchives] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [sRes, aRes] = await Promise.all([
+        fetch('/api/admin/snapshots', { headers: authHeader() }),
+        fetch('/api/admin/archives', { headers: authHeader() }),
+      ]);
+      const s = await sRes.json();
+      const a = await aRes.json();
+      setSnapshots(s.snapshots || []);
+      setArchives(a.archives || []);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const restoreSnapshot = async (filename) => {
+    const takenAt = snapshots.find(s => s.filename === filename)?.taken_at;
+    const when = takenAt ? new Date(takenAt).toLocaleString() : filename;
+    if (!confirm(`Restore snapshot from ${when}? Current live data will be overwritten (a safety snapshot is taken first).`)) return;
+    setBusy(filename);
+    try {
+      const res = await fetch(`/api/admin/snapshots/${encodeURIComponent(filename)}/restore`, { method:'POST', headers: authHeader() });
+      const data = await res.json();
+      if (data.success) alert(`✅ Restored. Teams: ${data.teams} · Zones: ${data.zones}`);
+      else alert('Error: ' + JSON.stringify(data));
+    } catch (e) { alert('Error: ' + e.message); }
+    setBusy(null);
+    load();
+  };
+
+  const downloadArchive = (filename) => {
+    fetch(`/api/admin/archives/${encodeURIComponent(filename)}`, { headers: authHeader() })
+      .then(r => r.blob()).then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+        URL.revokeObjectURL(url);
+      });
+  };
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      <div className="card card-lg" style={{ border:'1px solid var(--warning)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, color:'var(--warning)' }}>🕐 AUTO-SNAPSHOTS</h3>
+          <button className="btn-ghost" onClick={load} style={{ fontSize:11, padding:'4px 10px' }}>{loading?'...':'↻ Refresh'}</button>
+        </div>
+        <p style={{ fontSize:12, color:'var(--text2)', marginBottom:12, lineHeight:1.6 }}>
+          A local recovery point is saved automatically every 5 minutes, plus right before any restore or factory reset. Restoring takes a safety snapshot of the current state first.
+        </p>
+        {snapshots.length===0 ? (
+          <div style={{ color:'var(--text3)', fontSize:12, fontFamily:'var(--font-mono)' }}>No snapshots yet.</div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:6, maxHeight:220, overflowY:'auto' }}>
+            {snapshots.map(s => (
+              <div key={s.filename} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
+                <div style={{ flex:1, fontFamily:'var(--font-mono)', fontSize:12 }}>{new Date(s.taken_at).toLocaleString()}</div>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>{s.size_kb}KB</div>
+                <button className="btn-ghost" disabled={busy===s.filename} onClick={()=>restoreSnapshot(s.filename)} style={{ fontSize:11, padding:'4px 10px', color:'var(--warning)', borderColor:'var(--warning)' }}>
+                  {busy===s.filename?'...':'Restore'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card card-lg" style={{ border:'1px solid var(--purple)' }}>
+        <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, marginBottom:8, color:'var(--purple)' }}>🗄️ PAST EVENTS</h3>
+        <p style={{ fontSize:12, color:'var(--text2)', marginBottom:12, lineHeight:1.6 }}>
+          Every Factory Reset automatically archives the completed event (teams, scores, top 3) before wiping. Download to keep it permanently — the archive itself only lives as long as this server's disk.
+        </p>
+        {archives.length===0 ? (
+          <div style={{ color:'var(--text3)', fontSize:12, fontFamily:'var(--font-mono)' }}>No past events archived yet — this fills up after your first Factory Reset.</div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {archives.map(a => (
+              <div key={a.filename} style={{ padding:'10px 14px', background:'var(--bg3)', borderRadius:6 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+                  <div style={{ fontFamily:'var(--font-display)', fontSize:14 }}>{a.event_name}</div>
+                  <button className="btn-ghost" onClick={()=>downloadArchive(a.filename)} style={{ fontSize:11, padding:'4px 10px' }}>⬇ Download</button>
+                </div>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>
+                  {new Date(a.archived_at).toLocaleString()} · {a.teams_count} teams · reached {a.phase_reached}
+                  {a.top_teams?.length > 0 && <> · 🥇 {a.top_teams[0].name}</>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

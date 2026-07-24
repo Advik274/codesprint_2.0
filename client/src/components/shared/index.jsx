@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useCountdown } from '../../hooks/useTimer';
+import { getSocket } from '../../hooks/useSocket';
+import { useRandomMeme } from '../../hooks/useRandomMeme';
 
 // ── Navbar ───────────────────────────────────────────────────────
 export function Navbar({ title, subtitle }) {
@@ -52,6 +55,7 @@ export function Navbar({ title, subtitle }) {
           {phase.replace('phase', 'Phase ').toUpperCase()}
         </div>
         {title && <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 14 }}>{title}</div>}
+        <ThemeToggle />
       </div>
     </nav>
   );
@@ -136,6 +140,85 @@ export function CountdownTimer({ endTime, label, paused }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+// ── Theme Toggle ───────────────────────────────────────────────────
+const THEME_KEY = 'dominance_theme';
+export function getStoredTheme() { return localStorage.getItem(THEME_KEY) || 'dark'; }
+export function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem(THEME_KEY, theme);
+}
+export function ThemeToggle() {
+  const [theme, setTheme] = useState(getStoredTheme);
+  const toggle = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    setTheme(next);
+  };
+  return (
+    <button className="theme-toggle" onClick={toggle} title="Toggle light/dark theme">
+      {theme === 'dark' ? '☀ Light' : '🌙 Dark'}
+    </button>
+  );
+}
+
+// ── Random Engineering Meme Popup ───────────────────────────────────
+// Ambient comic relief during dead time — never during a timed question or
+// Phase 3 build (pass enabled: false there). Same Hinglish CS-humor voice
+// as the Thank You page's closing joke, just lighter and more frequent.
+export function MemePopup({ enabled = true }) {
+  const { current, dismiss } = useRandomMeme({ enabled });
+  if (!current) return null;
+  return (
+    <div className="meme-popup" role="status">
+      <div className="meme-popup-label">// MEME.js</div>
+      {current.setup && <div className="meme-popup-setup">{current.setup}</div>}
+      <div className="meme-popup-line">{current.punchline || current.line}</div>
+      <button className="meme-popup-close" onClick={dismiss} aria-label="Dismiss">×</button>
+    </div>
+  );
+}
+
+// ── Need Help Button ──────────────────────────────────────────────
+// Pings admin/floaters in real time with the team's name and current phase.
+// Rate-limited server-side to one call per 15s per socket.
+export function HelpButton({ teamId, teamName, phase }) {
+  const { addToast } = useApp();
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [cooldown, setCooldown] = useState(0);
+
+  const send = () => {
+    if (cooldown > 0) return;
+    getSocket().emit('team:help_request', { team_id: teamId, message: message.trim() });
+    addToast({ message: '🆘 Help request sent — a coordinator is on the way.', type: 'warning' });
+    setMessage(''); setOpen(false);
+    setCooldown(15);
+    const iv = setInterval(() => setCooldown(c => { if (c <= 1) { clearInterval(iv); return 0; } return c - 1; }), 1000);
+  };
+
+  return (
+    <>
+      {open && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:499 }} onClick={()=>setOpen(false)}>
+          <div className="card card-lg" onClick={e=>e.stopPropagation()} style={{
+            position:'fixed', bottom:90, right:20, width:280, border:'1px solid var(--warning)', zIndex:500,
+          }}>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:'var(--warning)', marginBottom:8 }}>🆘 Request Help</div>
+            <textarea value={message} onChange={e=>setMessage(e.target.value)} rows={2} placeholder="What's wrong? (optional)"
+              style={{ fontSize:13, marginBottom:10, width:'100%' }} autoFocus/>
+            <button className="btn-warning" onClick={send} style={{ width:'100%', padding:10, fontSize:13 }}>
+              Send — {teamName} needs help
+            </button>
+          </div>
+        </div>
+      )}
+      <button className="help-fab" onClick={()=>setOpen(o=>!o)} disabled={cooldown>0}>
+        🆘 {cooldown>0 ? `Sent (${cooldown}s)` : 'Need Help'}
+      </button>
+    </>
   );
 }
 

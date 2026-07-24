@@ -35,11 +35,15 @@ git push -u origin main
 | **Start Command** | `cd server && node index.js` |
 | **Instance Type** | `Free` |
 
-5. Add **Environment Variable**:
+5. Add **Environment Variables**:
 
 | Key | Value |
 |-----|-------|
 | `NODE_ENV` | `production` |
+| `ADMIN_PASSWORD` | pick a real password — full admin panel access |
+| `ZONE_PASSWORD` | pick a different password — zone-laptop access only |
+
+Without these, the server falls back to an insecure default and logs a warning — fine for a quick demo, not for a real event with the repo on GitHub.
 
 6. Click **Create Web Service**
 
@@ -67,7 +71,7 @@ That's your single URL for everything.
 | Spectator | `https://dominance-xxxx.onrender.com/spectator` |
 | Health check | `https://dominance-xxxx.onrender.com/health` |
 
-Admin token: `dominance2024`
+Admin/zone passwords: whatever you set as `ADMIN_PASSWORD` / `ZONE_PASSWORD` above.
 
 ---
 

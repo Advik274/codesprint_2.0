@@ -297,7 +297,10 @@ Write the letter (A, B, or C):`,
 \`\`\`
 
 Write the SQL query that returns the names of all 2nd year students with a score above 80, ordered by score descending:`,
-    answer: "SELECT name FROM students WHERE year = 2 AND score > 80 ORDER BY score DESC",
+    answers: [
+      "SELECT name FROM students WHERE year = 2 AND score > 80 ORDER BY score DESC",
+      "SELECT name FROM students WHERE score > 80 AND year = 2 ORDER BY score DESC",
+    ],
     hint_type: 'SQL WHERE + ORDER BY',
   },
   {
@@ -368,7 +371,10 @@ For each operation below, write the correct HTTP method AND endpoint path:
 
 Format your answer as numbered lines like:
 1. METHOD /path`,
-    answer: '1. GET /books\n2. GET /books/42\n3. POST /books\n4. PATCH /books/42\n5. DELETE /books/42',
+    answers: [
+      '1. GET /books\n2. GET /books/42\n3. POST /books\n4. PATCH /books/42\n5. DELETE /books/42',
+      '1. GET /books\n2. GET /books/42\n3. POST /books\n4. PUT /books/42\n5. DELETE /books/42',
+    ],
     hint_type: 'REST API conventions',
   },
 
@@ -438,7 +444,10 @@ Decode all 11 letters and write the message:`,
 \`\`\`
 
 Write a SQL query to find all student names who have registered for the SAME event MORE THAN ONCE (duplicates):`,
-    answer: "SELECT student_name, event FROM registrations GROUP BY student_name, event HAVING COUNT(*) > 1",
+    answers: [
+      "SELECT student_name, event FROM registrations GROUP BY student_name, event HAVING COUNT(*) > 1",
+      "SELECT student_name, event FROM registrations GROUP BY event, student_name HAVING COUNT(*) > 1",
+    ],
     hint_type: 'GROUP BY + HAVING',
   },
   {
@@ -457,7 +466,12 @@ teams:         members:
 \`\`\`
 
 Write a SQL query that shows: team name and how many members each team has, ordered by member count descending:`,
-    answer: "SELECT t.name, COUNT(m.id) AS member_count FROM teams t LEFT JOIN members m ON t.id = m.team_id GROUP BY t.id, t.name ORDER BY member_count DESC",
+    answers: [
+      "SELECT t.name, COUNT(m.id) AS member_count FROM teams t LEFT JOIN members m ON t.id = m.team_id GROUP BY t.id, t.name ORDER BY member_count DESC",
+      "SELECT t.name, COUNT(m.id) AS member_count FROM teams t JOIN members m ON t.id = m.team_id GROUP BY t.id, t.name ORDER BY member_count DESC",
+      "SELECT t.name, COUNT(m.id) AS member_count FROM teams t LEFT JOIN members m ON m.team_id = t.id GROUP BY t.id, t.name ORDER BY member_count DESC",
+      "SELECT t.name, COUNT(m.id) AS member_count FROM teams t LEFT JOIN members m ON t.id = m.team_id GROUP BY t.name ORDER BY member_count DESC",
+    ],
     hint_type: 'JOIN + GROUP BY + COUNT',
   },
 ];

@@ -3,6 +3,22 @@
 
 ---
 
+## ✨ WHAT'S NEW
+
+- **Real auth** — env-based admin/zone passwords (never shipped in the client bundle), login lockout after repeated failures, a separate lower-privilege Zone Operator password
+- **Auto-recovery** — timestamped local snapshots every 5 min + before any risky action, one-click restore from the Backup tab
+- **Event archive** — Factory Reset now auto-archives the completed event (teams, scores, top 3) before wiping, downloadable from the Backup tab
+- **Offline QR codes** — generated fully client-side, no internet dependency (the old version called a third-party API — broken on a no-internet hotspot deployment)
+- **Printable passcode cards** — big-font, print-ready sheet for the registration desk
+- **"Need Help" button** — team dashboard can ping admin/floaters in real time with team name + phase
+- **Live analytics** — hardest gauntlet rounds, hardest zones, hardest quiz questions, all computed live, no setup needed
+- **Sound & hype mode** — synthesized capture/elimination/winner sound effects on the Spectator screen (mutable)
+- **Live rank toasts** — teams get notified when their leaderboard position changes
+- **Dark/light theme toggle** — on every screen
+- **Installable PWA** — add-to-homescreen on phones, resilient to brief WiFi drops (auto rejoins its room on reconnect)
+
+---
+
 ## ⚡ QUICK START (do this in order)
 
 ### Step 1 — Install dependencies
@@ -45,10 +61,15 @@ npx concurrently "cd server && npm run dev" "cd client && npm run dev"
 
 ## 🔐 CREDENTIALS
 
-| | |
-|---|---|
-| **Admin token** | `dominance2024` |
-| Team passcodes | Alpha:1111 Beta:2222 Gamma:3333 Delta:4444 Epsilon:5555 Zeta:6666 Eta:7777 Theta:8888 Iota:9999 Kappa:0000 |
+Admin/zone passwords are **no longer hardcoded** — they're read from environment variables so the real password never ships inside the public client bundle.
+
+1. Copy `server/.env.example` to `server/.env`
+2. Set `ADMIN_PASSWORD` (full admin panel) and `ZONE_PASSWORD` (zone-laptop only — give this to Zone Operators instead of the admin password)
+3. Restart the server
+
+If unset, it falls back to the old default (`dominance2024`) with a loud console warning — fine for local testing, **do not leave it unset for a real event**.
+
+Team passcodes are now auto-generated per team at registration (no fixed list) — see the Setup tab or the printable Passcode Cards in QR & Cards tab.
 
 ---
 
@@ -88,13 +109,18 @@ npx concurrently "cd server && npm run dev" "cd client && npm run dev"
 dominance/
 ├── server/
 │   ├── index.js              ← Express + Socket.io server
+│   ├── .env.example           ← Copy to .env — ADMIN_PASSWORD / ZONE_PASSWORD
 │   ├── data/
 │   │   ├── seed.js           ← Run to reset database
-│   │   └── db.json           ← Auto-generated flat-file DB
+│   │   ├── db.json           ← Auto-generated flat-file DB
+│   │   ├── snapshots/        ← Auto-generated recovery points (gitignored)
+│   │   └── archive/          ← Auto-generated past-event archives (gitignored)
 │   ├── lib/
+│   │   ├── auth.js           ← Sessions, login lockout, admin/zone roles
+│   │   ├── snapshots.js      ← Periodic snapshots + event archive
 │   │   ├── battery.js        ← Battery drain engine
 │   │   ├── scoring.js        ← Score calculations
-│   │   └── phases.js         ← Phase state machine
+│   │   └── questions.js      ← Question/zone-problem pools
 │   └── sockets/
 │       └── events.js         ← All real-time events
 └── client/
@@ -103,16 +129,18 @@ dominance/
         │   ├── JoinTeam.jsx
         │   ├── TeamDashboard.jsx   ← Mobile team view
         │   ├── AdminDashboard.jsx  ← Full admin control
+        │   ├── ZoneOperator.jsx    ← Zone-laptop screen (own password)
         │   └── Spectator.jsx       ← Big screen leaderboard
         ├── components/
         │   ├── phase1/       ← Question cards, elimination overlay
         │   ├── phase2/       ← Zone map, battery, firewall/breach
         │   ├── phase3/       ← Problem reveal, submission, judge panel
-        │   └── shared/       ← Navbar, toasts, battery bar, timer
+        │   └── shared/       ← Navbar, toasts, battery bar, help button, theme toggle
         ├── context/
         │   └── AppContext.jsx  ← Global state + socket wiring
         └── hooks/
-            ├── useSocket.js   ← Socket.io connection
+            ├── useSocket.js   ← Socket.io connection + reconnect pubsub
+            ├── useSound.js    ← Synthesized sound effects
             └── useTimer.js    ← Countdown hook
 ```
 
