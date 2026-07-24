@@ -17,6 +17,21 @@ const __dirname = dirname(__filename);
 const clientBuild = join(__dirname, '../client/dist');
 
 
+// STABILITY FIX: last-resort safety net. Socket handlers are individually
+// wrapped (see sockets/events.js), but this catches anything outside that
+// path — a bug in the battery-drain interval tick, an unexpected rejection
+// in an async REST route, etc. — logging instead of taking the whole event
+// down for every connected team at once. Node's own advice is that the
+// process may be in a bad state after an uncaughtException, but for this
+// app "log and keep serving" beats "hard-crash mid-event" — a bad state
+// here means one drain tick misbehaved, not corrupted shared memory.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandledRejection]', err);
+});
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -43,6 +58,7 @@ export const EMPTY_DB = () => ({
   app_state: {
     current_phase: 'setup',
     phase1_round: 0, phase1_round_active: false, current_question: null, phase1_round_end: null,
+    phase1_paused_mid_round: false, phase1_paused_remaining_ms: null,
     // V7: Quiz Round (Phase 1.5)
     quiz_round_active: false,
     quiz_timer_end: null,
@@ -102,6 +118,8 @@ function patchDB() {
   const s = db.app_state;
   if (s.results_reveal_index === undefined) s.results_reveal_index = -1;
   if (s.phase1_round_end === undefined) s.phase1_round_end = null;
+  if (s.phase1_paused_mid_round === undefined) s.phase1_paused_mid_round = false;
+  if (s.phase1_paused_remaining_ms === undefined) s.phase1_paused_remaining_ms = null;
   if (s.thankyou_shown === undefined) s.thankyou_shown = false;
   if (s.phase2_paused === undefined) s.phase2_paused = false;
   if (s.phase3_paused === undefined) s.phase3_paused = false;

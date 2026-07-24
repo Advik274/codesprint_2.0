@@ -1712,9 +1712,22 @@ function QRTab({ state }) {
 // makes it unambiguous, using the server-computed phase1_round_end so the
 // countdown is synced rather than guessed.
 function Phase1RoundStatus({ state }) {
-  const { phase1_round_active, phase1_round, phase1_round_end } = state.app_state;
+  const { phase1_round_active, phase1_round, phase1_round_end, phase1_paused_mid_round } = state.app_state;
   const timer = useCountdown(phase1_round_active ? phase1_round_end : null);
   const timesUp = phase1_round_active && timer?.isDone;
+
+  // BUG FIX: master pause used to leave phase1_round_active=false with no
+  // indication the round was actually just paused, not ended — this
+  // showed "Round ended, click Start Round X+1" mid-pause, which would
+  // have let an admin accidentally skip straight to a new round instead
+  // of resuming the paused one.
+  if (phase1_paused_mid_round) {
+    return (
+      <div style={{ marginTop:10, padding:'8px 14px', background:'rgba(255,170,0,0.1)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)' }}>
+        ⏸ Round {phase1_round} paused — timer frozen, resumes where it left off.
+      </div>
+    );
+  }
 
   if (!phase1_round_active) {
     return (

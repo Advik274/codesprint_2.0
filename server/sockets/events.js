@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, getResultsBoard } from '../lib/scoring.js';
+import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, computeReveal } from '../lib/scoring.js';
 import { startBatteryDrain, stopBatteryDrain, pauseBatteryDrain, resumeBatteryDrain } from '../lib/battery.js';
 import { getRandomGauntletQuestion, getFiveZoneOptions, pickQuizQuestions } from '../lib/questions.js';
 import { buildClientState } from '../index.js';
@@ -27,6 +27,20 @@ function rateLimit(socketId, event, minIntervalMs = 500) {
   rateLimits.set(key, now);
   return true; // allowed
 }
+// ── Socket → team identity binding ────────────────────────────────
+// SECURITY FIX: every team-initiated event (submit an answer, set a zone
+// defense, submit a Phase 3 project, request help, ...) used to just
+// trust whatever team_id the client sent in the payload, with nothing
+// verifying the socket making the call actually belongs to that team.
+// Any team could impersonate any other team in all of these. team:join
+// already verifies a passcode before letting a socket into that team's
+// room — this binds that verified identity to the socket server-side, so
+// every subsequent team-scoped event can use the bound id instead of a
+// client-supplied one that could say anything.
+const socketTeams = new Map(); // socketId -> team_id
+function bindSocketTeam(socketId, teamId) { socketTeams.set(socketId, teamId); }
+function boundTeam(socketId) { return socketTeams.get(socketId) || null; }
+
 // Clean up rate limit map when socket disconnects
 function clearRateLimits(socketId) {
   for (const key of rateLimits.keys()) {
@@ -74,6 +88,28 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
   if (!saveDBNow) saveDBNow = saveDB;
 
   io.on('connection', (socket) => {
+    // STABILITY FIX: none of the ~50 handlers below were wrapped in a
+    // try/catch, and most destructure their payload with no default
+    // ({ zone_id, team_id }) => ...) — a single malformed or empty message
+    // (missing payload, wrong shape, a bug in a future handler) throws
+    // synchronously, and an uncaught exception inside a socket listener
+    // crashes the entire Node process for every connected team, zone
+    // laptop, and admin at once. Shadowing socket.on here wraps every
+    // subsequent registration in this connection automatically — one bad
+    // message now fails just that one call instead of taking the event
+    // down for everyone.
+    const rawOn = socket.on.bind(socket);
+    socket.on = (event, handler) => rawOn(event, (...args) => {
+      try {
+        const result = handler(...args);
+        if (result && typeof result.catch === 'function') {
+          result.catch(err => console.error(`[socket:${event}] async error:`, err));
+        }
+      } catch (err) {
+        console.error(`[socket:${event}] error:`, err);
+      }
+    });
+
     // On connect: send full state once (necessary for initial load)
     socket.emit('state:sync', buildClientState(db));
 
@@ -115,6 +151,7 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
         socket.emit('error', { message: 'Invalid team or passcode' }); return;
       }
       socket.join(`team_${team_id}`);
+      bindSocketTeam(socket.id, team_id); // this socket is now verified as team_id
       // Send only this team's private data (including passcode) to them specifically
       socket.emit('team:joined', {
         team: {
@@ -166,15 +203,37 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
     });
 
     // ── PHASE 1: Submit Answer ────────────────────────────────────
-    socket.on('phase1:submit_answer', ({ team_id, question_id, answer, time_taken_ms }) => {
+    socket.on('phase1:submit_answer', ({ question_id, answer, time_taken_ms }) => {
       // Rate limit: one answer per 1s (prevents double-submit spam)
       if (!rateLimit(socket.id, 'phase1:submit', 1000)) return;
-      if (db.app_state.current_phase !== 'phase1' || !db.app_state.phase1_round_active) return;
+      // SECURITY FIX: team_id used to come straight from the client payload
+      // — any team could submit an answer AS any other team. Now derived
+      // from the identity this socket actually verified via team:join.
+      const team_id = boundTeam(socket.id);
+      if (!team_id) { socket.emit('phase1:answer_rejected', { message: 'Not joined as a team — rejoin and try again.' }); return; }
+      // RELIABILITY FIX: this used to return silently on a stale/late
+      // submission (e.g. a buffered emit that finally arrives after the
+      // round already ended, following a dropped connection) — the team
+      // had no way to know their answer didn't count. Now it says so.
+      if (db.app_state.current_phase !== 'phase1' || !db.app_state.phase1_round_active) {
+        socket.emit('phase1:answer_rejected', { message: 'This round already ended — your answer didn\'t make it in time.' });
+        return;
+      }
 
       const team = db.teams.find(t => t.id === team_id);
       const q = db.app_state.current_question;
-      if (!team || !q || team.is_eliminated || q.id !== question_id) return;
-      if (team.phase1_scores.find(s => s.round === db.app_state.phase1_round)) return;
+      if (!team || !q || team.is_eliminated || q.id !== question_id) {
+        socket.emit('phase1:answer_rejected', { message: 'That question is no longer active.' });
+        return;
+      }
+      const existing = team.phase1_scores.find(s => s.round === db.app_state.phase1_round);
+      if (existing) {
+        // Already recorded — most likely a resend after a reconnect, not a
+        // real duplicate. Tell the client it succeeded either way instead
+        // of leaving a retry hanging with no response.
+        socket.emit('phase1:answer_result', { correct: existing.correct, score: existing.score, total: team.phase1_total_score });
+        return;
+      }
 
       const correct = isAnswerCorrect(answer, q);
       const score = correct ? calcPhase1Score(q.points, q.time_limit_seconds, time_taken_ms) : 0;
@@ -429,10 +488,14 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
     });
 
     // ── DEFENDING TEAM: Request defense options ───────────────────
-    socket.on('zone:set_defense_problem', async ({ zone_id, team_id }) => {
+    socket.on('zone:set_defense_problem', async ({ zone_id }) => {
       if (!rateLimit(socket.id, `defense_${zone_id}`, 2000)) return;
+      // SECURITY FIX: team_id used to come from the client payload — any
+      // team could claim to be any other team's zone owner. Now derived
+      // from the identity this socket actually verified via team:join.
+      const team_id = boundTeam(socket.id);
       const zone = db.zones.find(z => z.id === zone_id);
-      if (!zone || zone.owner_team_id !== team_id) {
+      if (!zone || !team_id || zone.owner_team_id !== team_id) {
         socket.emit('zone:error', { message: 'Only the zone owner can set defense' }); return;
       }
       if (!db.used_zone_problem_ids) db.used_zone_problem_ids = [];
@@ -446,13 +509,14 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
     });
 
     // ── DEFENDING TEAM: Confirm defense problem ───────────────────
-    socket.on('zone:confirm_defense', async ({ zone_id, team_id, problem_id }) => {
+    socket.on('zone:confirm_defense', async ({ zone_id, problem_id }) => {
       if (!rateLimit(socket.id, `defense_confirm_${zone_id}`, 2000)) return;
+      const team_id = boundTeam(socket.id); // SECURITY FIX: see zone:set_defense_problem above
       const zone = db.zones.find(z => z.id === zone_id);
       // BUG FIX: this used to return silently on ownership mismatch — the
       // team's client had no idea anything went wrong and the "Set Defense"
       // modal just sat there forever with no explanation ("not working").
-      if (!zone || zone.owner_team_id !== team_id) {
+      if (!zone || !team_id || zone.owner_team_id !== team_id) {
         socket.emit('zone:error', { message: 'You no longer own this zone — defense wasn\'t set.' });
         return;
       }
@@ -473,9 +537,12 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
     });
 
     // ── PHASE 3: Submit project ───────────────────────────────────
-    socket.on('phase3:submit_project', async ({ team_id, deploy_url, github_url, notes }) => {
+    socket.on('phase3:submit_project', async ({ deploy_url, github_url, notes }) => {
       if (!rateLimit(socket.id, 'phase3_submit', 3000)) return;
-      const team = db.teams.find(t => t.id === team_id);
+      // SECURITY FIX: team_id used to come from the client payload — any
+      // team could submit a project AS another team.
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
       if (!team || db.app_state.current_phase !== 'phase3') return;
       team.phase3_submission = { deploy_url: deploy_url || '', github_url: github_url || '', notes: notes || '', submitted_at: new Date().toISOString() };
       saveDB();
@@ -884,40 +951,28 @@ startBatteryDrain(db, io, saveDB);
 
     socket.on('admin:reveal_next', ({ admin_token }) => {
       if (!auth(admin_token)) return;
-      // Use getResultsBoard so the correct score field is used regardless of which
-      // phases were enabled (fixes quiz-only / phase1-only events showing #0 ???)
       const phasesEnabled = db.app_state.event_config?.phases_enabled || [];
-      const board = getResultsBoard(db.teams, phasesEnabled);
-      // BUG FIX: reveal_top_n lets the admin limit the dramatic reveal to just
-      // the top N teams (e.g. top 5) instead of clicking through the entire
-      // field — worst-of-the-top-N first, winner last.
       const topN = db.app_state.event_config?.reveal_top_n || 0;
-      const limitedBoard = topN > 0 ? board.slice(0, topN) : board;
-      const revealBoard = [...limitedBoard].reverse(); // worst → best
+      const result = computeReveal(db.teams, phasesEnabled, db.app_state.results_reveal_index, topN);
 
-      const idx = (db.app_state.results_reveal_index ?? -1) + 1;
-
-      // BUG FIX: there was no bounds check here at all — clicking "Reveal
-      // Next" past the last team incremented the index anyway, produced
-      // `undefined` from the array, and broadcast a team:null announcement
-      // to every connected screen, rendering as a broken "??? — 0TH PLACE".
-      // Now it's capped, and only the admin who over-clicked gets told —
-      // nothing goes out to the other screens.
-      if (idx >= revealBoard.length) {
-        socket.emit('admin:error', { message: revealBoard.length === 0 ? 'No results to reveal yet.' : 'All positions already revealed — nothing more to show.' });
+      // BUG FIX: there used to be no bounds check at all — clicking "Reveal
+      // Next" past the last team broadcast a null-team announcement to
+      // every screen ("??? — 0TH PLACE"). Now capped, and only the admin
+      // who over-clicked gets told — nothing goes out to the other screens.
+      if (!result.ok) {
+        socket.emit('admin:error', { message: result.reason });
         return;
       }
 
-      db.app_state.results_reveal_index = idx;
-      const revealed = revealBoard[idx];
+      db.app_state.results_reveal_index = result.idx;
       saveDB();
       io.emit('results:announce', {
-        index: idx, total: revealBoard.length,
-        team: revealed,
-        actual_rank: board.findIndex(t => t.team_id === revealed.team_id),
-        is_winner: idx === revealBoard.length - 1,
-        is_last: idx >= revealBoard.length - 1,
-        score_label: revealed?.score_label || null,
+        index: result.idx, total: result.total,
+        team: result.team,
+        actual_rank: result.actual_rank,
+        is_winner: result.is_winner,
+        is_last: result.is_last,
+        score_label: result.score_label,
       });
     });
 
@@ -949,7 +1004,15 @@ startBatteryDrain(db, io, saveDB);
         db.app_state.phase3_timer_end = null;
         db.app_state.phase3_paused = true;
       }
+      // BUG FIX: this set phase1_round_active=false on pause (correct —
+      // blocks submissions) but never touched phase1_round_end, so the
+      // countdown admin now sees kept counting straight through the pause
+      // instead of freezing like every other phase's timer does.
       if (db.app_state.phase1_round_active) {
+        if (db.app_state.phase1_round_end) {
+          db.app_state.phase1_paused_remaining_ms = Math.max(0, new Date(db.app_state.phase1_round_end) - Date.now());
+          db.app_state.phase1_round_end = null;
+        }
         db.app_state.phase1_round_active = false;
         db.app_state.phase1_paused_mid_round = true;
       }
@@ -963,6 +1026,7 @@ startBatteryDrain(db, io, saveDB);
         phase3_paused: db.app_state.phase3_paused,
         phase3_timer_end: db.app_state.phase3_timer_end,
         phase1_round_active: false,
+        phase1_round_end: db.app_state.phase1_round_end,
       });
       io.emit('toast:broadcast', { message: `⏸ EVENT PAUSED: ${db.app_state.master_pause_reason}`, type: 'warning' });
       log(io, db, 'phase_change', `⏸ MASTER PAUSE: ${db.app_state.master_pause_reason}`);
@@ -989,6 +1053,15 @@ startBatteryDrain(db, io, saveDB);
         db.app_state.phase3_paused_remaining_ms = null;
         db.app_state.phase3_paused = false;
       }
+      // BUG FIX: counterpart to the master_pause fix above — restore the
+      // Phase 1 round's remaining time instead of leaving it paused
+      // forever or resuming with a wrong/missing deadline.
+      if (phase === 'phase1' && db.app_state.phase1_paused_mid_round && db.app_state.phase1_paused_remaining_ms) {
+        db.app_state.phase1_round_end = new Date(Date.now() + db.app_state.phase1_paused_remaining_ms).toISOString();
+        db.app_state.phase1_paused_remaining_ms = null;
+        db.app_state.phase1_paused_mid_round = false;
+        db.app_state.phase1_round_active = true;
+      }
 
       saveDB();
       io.emit('state:delta', {
@@ -997,6 +1070,8 @@ startBatteryDrain(db, io, saveDB);
         phase2_timer_end: db.app_state.phase2_timer_end,
         phase3_paused: db.app_state.phase3_paused,
         phase3_timer_end: db.app_state.phase3_timer_end,
+        phase1_round_active: db.app_state.phase1_round_active,
+        phase1_round_end: db.app_state.phase1_round_end,
       });
       io.emit('toast:broadcast', { message: '▶️ EVENT RESUMED — continue!', type: 'success' });
       log(io, db, 'phase_change', '▶️ MASTER RESUME');
@@ -1224,9 +1299,12 @@ startBatteryDrain(db, io, saveDB);
     });
 
     // ── Need Help button (team-side, no admin token needed) ───────
-    socket.on('team:help_request', ({ team_id, message }) => {
+    socket.on('team:help_request', ({ message }) => {
       if (!rateLimit(socket.id, 'team:help_request', 15000)) return; // one call per 15s
-      const team = db.teams.find(t => t.id === team_id);
+      // SECURITY FIX: team_id used to come from the client payload — any
+      // team could spam help requests attributed to another team.
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
       if (!team) return;
       if (!db.help_requests) db.help_requests = [];
       const req = {
@@ -1255,6 +1333,7 @@ startBatteryDrain(db, io, saveDB);
 
     socket.on('disconnect', () => {
       clearRateLimits(socket.id);
+      socketTeams.delete(socket.id);
     });
 
     // ── V7: Quiz Round (Phase 1.5) ────────────────────────────────
@@ -1374,10 +1453,13 @@ startBatteryDrain(db, io, saveDB);
     });
 
     // Team submits quiz answers (per member)
-    socket.on('quiz:submit_answers', ({ team_id, member_name, answers }) => {
+    socket.on('quiz:submit_answers', ({ member_name, answers }) => {
       if (!rateLimit(socket.id, 'quiz:submit_answers', 3000)) return;
       if (!db.app_state.quiz_round_active) return;
-      const team = db.teams.find(t => t.id === team_id);
+      // SECURITY FIX: team_id used to come from the client payload — any
+      // team could submit quiz answers attributed to another team.
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
       if (!team) return;
       // FIX V7.1: reject blank member names — prevents "" key polluting quiz_member_answers
       const cleanName = typeof member_name === 'string' ? member_name.trim() : '';

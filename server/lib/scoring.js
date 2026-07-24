@@ -78,3 +78,41 @@ export function getResultsBoard(teams, phasesEnabled = []) {
       score: 0, scores: null, score_label: 'Rank',
     }));
 }
+
+// Pure reveal-step computation, extracted out of the admin:reveal_next
+// socket handler so the bounds-checking (previously entirely missing —
+// see BUG FIX below) is directly unit-testable without a live socket.
+//
+// topN > 0 limits the dramatic reveal to just the top N places instead of
+// the whole field; revealIndex is the last index that was revealed
+// (-1 if nothing revealed yet).
+export function computeReveal(teams, phasesEnabled, revealIndex, topN = 0) {
+  const board = getResultsBoard(teams, phasesEnabled);
+  const limitedBoard = topN > 0 ? board.slice(0, topN) : board;
+  const revealBoard = [...limitedBoard].reverse(); // worst → best
+
+  const idx = (revealIndex ?? -1) + 1;
+
+  // BUG FIX: the original inline version had no bounds check at all —
+  // calling this past the last team indexed off the end of the array,
+  // producing `undefined`, which the caller broadcast as a null-team
+  // announcement to every screen ("??? — 0TH PLACE").
+  if (idx >= revealBoard.length) {
+    return {
+      ok: false,
+      reason: revealBoard.length === 0 ? 'No results to reveal yet.' : 'All positions already revealed — nothing more to show.',
+    };
+  }
+
+  const revealed = revealBoard[idx];
+  return {
+    ok: true,
+    idx,
+    total: revealBoard.length,
+    team: revealed,
+    actual_rank: board.findIndex(t => t.team_id === revealed.team_id),
+    is_winner: idx === revealBoard.length - 1,
+    is_last: idx >= revealBoard.length - 1,
+    score_label: revealed?.score_label || null,
+  };
+}

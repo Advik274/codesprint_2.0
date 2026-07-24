@@ -25,7 +25,10 @@ function pruneSessions() {
     if (s.expiresAt < now) sessions.delete(token);
   }
 }
-setInterval(pruneSessions, 10 * 60 * 1000);
+// .unref() so this background maintenance timer never keeps the process
+// alive by itself — matters for clean shutdown/testing, harmless for the
+// real running server (which has plenty else keeping it alive).
+setInterval(pruneSessions, 10 * 60 * 1000).unref();
 
 // ── Login lockout ─────────────────────────────────────────────────
 // key (IP) -> { count, lockedUntil }

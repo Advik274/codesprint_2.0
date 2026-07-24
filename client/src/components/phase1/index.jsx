@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { getSocket } from '../../hooks/useSocket';
+import { getSocket, onSocketReconnect, useConnectionStatus } from '../../hooks/useSocket';
 import { useApp } from '../../context/AppContext';
 
 // ── Question Card ────────────────────────────────────────────────
@@ -8,17 +8,29 @@ export function QuestionCard({ question, teamId, onSubmitted }) {
   const [textAnswer, setTextAnswer] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState(null);
+  const [submitError, setSubmitError] = useState('');
   const [timeLeft, setTimeLeft] = useState(question.time_limit_seconds);
   const [timeUp, setTimeUp] = useState(false);
   const startTime = useRef(Date.now());
+  // RELIABILITY FIX: a submit's emit could be lost or delayed by a dropped
+  // connection with zero feedback that it might not have landed — the UI
+  // just optimistically said "Answer submitted" regardless. This tracks
+  // what's still awaiting server confirmation so it can be resent
+  // automatically on reconnect (safe: the server just re-confirms if it
+  // already landed, instead of double-counting) and so the team can see
+  // when that's actually happening instead of assuming it worked.
+  const pendingPayloadRef = useRef(null);
+  const connected = useConnectionStatus();
   useEffect(() => {
       setSelected('');
       setTextAnswer('');
       setSubmitted(false);
       setResult(null);
+      setSubmitError('');
       setTimeUp(false);
       setTimeLeft(question.time_limit_seconds);
       startTime.current = Date.now();
+      pendingPayloadRef.current = null;
     }, [question.id]);
 
     // BUG FIX: this used to tick regardless of submission state — a team
@@ -43,19 +55,50 @@ export function QuestionCard({ question, teamId, onSubmitted }) {
 
     useEffect(() => {
       const socket = getSocket();
-      const onResult = (data) => { setResult(data); onSubmitted?.(data); };
+      const onResult = (data) => {
+        pendingPayloadRef.current = null;
+        setSubmitError('');
+        setResult(data);
+        onSubmitted?.(data);
+      };
+      const onRejected = ({ message }) => {
+        if (!pendingPayloadRef.current) return; // not about our current attempt
+        pendingPayloadRef.current = null;
+        setSubmitError(message || 'Your answer didn\'t go through — the round may have ended.');
+      };
+      // A dropped connection during/after submit is common on event WiFi.
+      // Resend automatically once reconnected instead of leaving the team
+      // stuck on "Answer submitted..." with no idea whether it landed.
+      const unsubReconnect = onSocketReconnect(() => {
+        if (pendingPayloadRef.current) {
+          getSocket().emit('phase1:submit_answer', pendingPayloadRef.current);
+        }
+      });
       socket.on('phase1:answer_result', onResult);
-      return () => socket.off('phase1:answer_result', onResult);
+      socket.on('phase1:answer_rejected', onRejected);
+      return () => {
+        socket.off('phase1:answer_result', onResult);
+        socket.off('phase1:answer_rejected', onRejected);
+        unsubReconnect();
+      };
     }, []);
-    
+
   const handleSubmit = () => {
     if (submitted) return;
     const answer = question.type === 'mcq' ? selected : textAnswer;
     if (!answer) return;
 
     const time_taken_ms = Date.now() - startTime.current;
-    getSocket().emit('phase1:submit_answer', { team_id: teamId, question_id: question.id, answer, time_taken_ms });
+    const payload = { question_id: question.id, answer, time_taken_ms };
+    pendingPayloadRef.current = payload;
+    getSocket().emit('phase1:submit_answer', payload);
     setSubmitted(true);
+    setSubmitError('');
+  };
+
+  const retrySubmit = () => {
+    setSubmitError('');
+    setSubmitted(false);
   };
 
   const urgentTime = timeLeft <= 10;
@@ -149,9 +192,18 @@ export function QuestionCard({ question, teamId, onSubmitted }) {
         </div>
       )}
 
-      {submitted && !result && !timeUp && (
+      {submitError && (
+        <div style={{ textAlign: 'center', padding: '20px' }}>
+          <div style={{ color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 14, marginBottom: 14 }}>❌ {submitError}</div>
+          <button className="btn-primary" onClick={retrySubmit} style={{ padding: '10px 28px' }}>Try Submitting Again</button>
+        </div>
+      )}
+
+      {submitted && !result && !submitError && !timeUp && (
         <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-          Answer submitted. Waiting for round to end...
+          {connected
+            ? 'Answer submitted. Waiting for round to end...'
+            : '⏳ Connection dropped — will resend automatically once reconnected...'}
         </div>
       )}
 

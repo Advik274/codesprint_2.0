@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon --delay 500ms --watch . --ext js,mjs --ignore data --ignore '*.json' index.js",
-    "seed": "node data/seed.js"
+    "seed": "node data/seed.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
