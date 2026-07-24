@@ -42,7 +42,7 @@ const DB_PATH = './data/db.json';
 export const EMPTY_DB = () => ({
   app_state: {
     current_phase: 'setup',
-    phase1_round: 0, phase1_round_active: false, current_question: null,
+    phase1_round: 0, phase1_round_active: false, current_question: null, phase1_round_end: null,
     // V7: Quiz Round (Phase 1.5)
     quiz_round_active: false,
     quiz_timer_end: null,
@@ -57,6 +57,7 @@ export const EMPTY_DB = () => ({
     phase3_problem: null, results_reveal_index: -1,
     // V2: master pause
     master_paused: false, master_paused_at: null, master_pause_reason: '',
+    thankyou_shown: false,
     // Sprint 2: configurable event settings
     event_config: {
       event_name: 'CODE SPRINT 2.0',
@@ -75,6 +76,8 @@ export const EMPTY_DB = () => ({
       speed_demo_enabled: false,
       speed_demo_duration_sec: 90,
       audience_weight_percent: 10,
+      // Results reveal: 0 = reveal every team, N = only the top N places
+      reveal_top_n: 0,
       // V7: Custom Questions
       custom_questions: [],
     },
@@ -98,6 +101,8 @@ function patchDB() {
   if (!db.phase_history) db.phase_history = [];
   const s = db.app_state;
   if (s.results_reveal_index === undefined) s.results_reveal_index = -1;
+  if (s.phase1_round_end === undefined) s.phase1_round_end = null;
+  if (s.thankyou_shown === undefined) s.thankyou_shown = false;
   if (s.phase2_paused === undefined) s.phase2_paused = false;
   if (s.phase3_paused === undefined) s.phase3_paused = false;
   if (s.master_paused === undefined) s.master_paused = false;
@@ -121,6 +126,7 @@ function patchDB() {
   if (s.event_config.speed_demo_enabled === undefined) s.event_config.speed_demo_enabled = false;
   if (s.event_config.speed_demo_duration_sec === undefined) s.event_config.speed_demo_duration_sec = 90;
   if (s.event_config.audience_weight_percent === undefined) s.event_config.audience_weight_percent = 10;
+  if (s.event_config.reveal_top_n === undefined) s.event_config.reveal_top_n = 0;
   if (s.event_config.quiz_num_questions === undefined) s.event_config.quiz_num_questions = 50;
   if (s.event_config.quiz_duration_min === undefined) s.event_config.quiz_duration_min = 30;
   if (!s.event_config.custom_questions) s.event_config.custom_questions = [];

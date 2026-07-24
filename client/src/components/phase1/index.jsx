@@ -21,7 +21,13 @@ export function QuestionCard({ question, teamId, onSubmitted }) {
       startTime.current = Date.now();
     }, [question.id]);
 
+    // BUG FIX: this used to tick regardless of submission state — a team
+    // that answered still watched their own countdown keep running down
+    // to 0, which reads as "did my answer not count?" even though it did.
+    // Stopping (and freezing) it the moment they submit makes it clear
+    // their answer locked in and they're just waiting on the round now.
     useEffect(() => {
+      if (submitted || result || timeUp) return;
       const iv = setInterval(() => {
         setTimeLeft(t => {
           if (t <= 1) {
@@ -33,7 +39,7 @@ export function QuestionCard({ question, teamId, onSubmitted }) {
         });
       }, 1000);
       return () => clearInterval(iv);
-    }, [question.id]);
+    }, [question.id, submitted, result, timeUp]);
 
     useEffect(() => {
       const socket = getSocket();

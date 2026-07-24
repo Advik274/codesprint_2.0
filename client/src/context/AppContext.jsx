@@ -191,6 +191,14 @@ export function AppProvider({ children }) {
     'audience:votes':      (d) => dispatch({ type: 'AUDIENCE_VOTES', payload: d }),
     'admin:team_registered': (d) => dispatch({ type: 'TEAM_REGISTERED', payload: d }),
     'admin:passcodes':     (d) => dispatch({ type: 'PASSCODES', payload: d }),
+    // BUG FIX: this event was already being emitted by the server (admin-
+    // only, includes the current question's answer) but nothing on the
+    // client ever listened for it — the admin panel's answer display only
+    // worked because the answer was ALSO being broadcast to every team via
+    // the global state:delta, which was the actual security hole. Now that
+    // the global broadcast is answer-free, this admin-only channel is what
+    // actually feeds the admin panel.
+    'admin:state_delta':   (d) => dispatch({ type: 'STATE_DELTA', payload: d }),
     // Quiz real-time sync
     'quiz:started':        (d) => dispatch({ type: 'STATE_DELTA', payload: { quiz_round_active: true, quiz_questions: d.questions, quiz_timer_end: d.timer_end, quiz_paused: false, quiz_member_answers: {} } }),
     'quiz:ended':          (d) => dispatch({ type: 'STATE_DELTA', payload: { quiz_round_active: false } }),

@@ -199,36 +199,66 @@ function Phase2View({ team, teamId, state }) {
   const [defenseModal, setDefenseModal] = useState(null); // zone object to set defense for
   const [defenseOptions, setDefenseOptions] = useState([]);
   const [defenseLoading, setDefenseLoading] = useState(false);
+  const [defenseError, setDefenseError] = useState('');
   const [defenseSet, setDefenseSet] = useState(null); // { zone_id, label }
 
   const socket = getSocket();
 
-  // Listen for prompt to set defense problem after capturing
+  // BUG FIX: the whole defense-setting flow used to be built on socket.once()
+  // listeners registered fresh inside openDefenseModal/confirmDefense, PLUS
+  // a zone:set_problem_prompt listener that re-registered on every single
+  // zone:delta (which fires constantly during Phase 2 for every team's
+  // attempts, not just this one) — and there was no listener for zone:error
+  // at all. If the server ever rejected a request (e.g. the zone's
+  // ownership changed between opening the modal and confirming), the
+  // client had zero way to find out: no error, no toast, just a "Loading
+  // options..." spinner that stayed there forever with no explanation.
+  // A ref keeps the current modal's zone id available to stable,
+  // once-registered listeners without needing to re-subscribe on churn.
+  const defenseModalRef = useRef(null);
+  useEffect(() => { defenseModalRef.current = defenseModal; }, [defenseModal]);
+
   useEffect(() => {
-    socket.on('zone:set_problem_prompt', ({ zone_id, zone_name }) => {
-      const zone = state.zones.find(z => z.id === zone_id);
-      if (zone) openDefenseModal(zone);
-    });
-    return () => socket.off('zone:set_problem_prompt');
-  }, [state.zones]);
+    const onPrompt = ({ zone_id, zone_name }) => openDefenseModal({ id: zone_id, name: zone_name });
+    const onOptions = ({ zone_id, options }) => {
+      if (defenseModalRef.current?.id !== zone_id) return; // stale response — ignore
+      setDefenseOptions(options);
+      setDefenseLoading(false);
+    };
+    const onError = ({ message }) => {
+      setDefenseLoading(false);
+      setDefenseError(message || 'Something went wrong — try again.');
+    };
+    const onSet = ({ zone_id, problem_label }) => {
+      if (defenseModalRef.current?.id !== zone_id) return;
+      setDefenseSet({ zone_id, label: problem_label });
+      setDefenseModal(null);
+      setTimeout(() => setDefenseSet(null), 5000);
+    };
+    socket.on('zone:set_problem_prompt', onPrompt);
+    socket.on('zone:defense_options', onOptions);
+    socket.on('zone:error', onError);
+    socket.on('zone:defense_set', onSet);
+    return () => {
+      socket.off('zone:set_problem_prompt', onPrompt);
+      socket.off('zone:defense_options', onOptions);
+      socket.off('zone:error', onError);
+      socket.off('zone:defense_set', onSet);
+    };
+  }, []); // register once — defenseModalRef always has the current value
 
   const openDefenseModal = (zone) => {
+    if (defenseLoading) return; // already fetching for another zone — ignore duplicate triggers
+    setDefenseError('');
+    setDefenseOptions([]);
     setDefenseLoading(true);
     setDefenseModal(zone);
     socket.emit('zone:set_defense_problem', { zone_id: zone.id, team_id: teamId });
-    socket.once('zone:defense_options', ({ options }) => {
-      setDefenseOptions(options);
-      setDefenseLoading(false);
-    });
   };
 
   const confirmDefense = (problemId) => {
+    if (!defenseModal) return;
     socket.emit('zone:confirm_defense', { zone_id: defenseModal.id, team_id: teamId, problem_id: problemId });
-    socket.once('zone:defense_set', ({ zone_name, problem_label }) => {
-      setDefenseSet({ zone_id: defenseModal.id, label: problem_label });
-      setDefenseModal(null);
-      setTimeout(() => setDefenseSet(null), 5000);
-    });
   };
 
   const myZones = state.zones.filter(z => z.owner_team_id === teamId);
@@ -419,7 +449,12 @@ function Phase2View({ team, teamId, state }) {
               <button onClick={() => setDefenseModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text3)', fontSize: 20, cursor: 'pointer' }}>×</button>
             </div>
 
-            {defenseLoading ? (
+            {defenseError ? (
+              <div style={{ textAlign: 'center', padding: 24 }}>
+                <div style={{ color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 13, marginBottom: 16 }}>❌ {defenseError}</div>
+                <button className="btn-primary" onClick={() => openDefenseModal(defenseModal)} style={{ padding: '10px 24px' }}>Try Again</button>
+              </div>
+            ) : defenseLoading ? (
               <div style={{ textAlign: 'center', padding: 32, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
                 Loading options...
               </div>

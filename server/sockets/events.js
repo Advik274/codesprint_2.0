@@ -84,6 +84,30 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
       if (!auth(admin_token)) return;
       socket.emit('admin:passcodes', db.teams.map(t => ({ id: t.id, passcode: t.passcode })));
     });
+
+    // ── ADMIN: Zone problem/answer visibility ──────────────────────
+    // Zone answers are stripped before ever reaching a zone operator or
+    // team (see zone:challenge_ready / zone:pick_problem) — correct, they
+    // shouldn't see them. But that also meant admin had zero visibility
+    // into what a zone's defense trap or active challenge even was, with
+    // no way to help a team that's genuinely stuck. Pull-only and
+    // admin-token-gated so answers are never broadcast to anyone else.
+    socket.on('admin:request_zone_intel', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      const intel = db.zones.map(z => ({
+        zone_id: z.id,
+        defense_problem: z.problem ? {
+          label: z.problem.label, type: z.problem.type,
+          problem: z.problem.problem, answer: z.problem.answer,
+        } : null,
+        active_challenge: z._pending?.problem ? {
+          label: z._pending.problem.label, type: z._pending.problem.type,
+          problem: z._pending.problem.problem, answer: z._pending.problem.answer,
+          attempting_team: z._pending.team_name,
+        } : null,
+      }));
+      socket.emit('admin:zone_intel', { intel });
+    });
     socket.on('team:join', ({ team_id, passcode }) => {
       if (!rateLimit(socket.id, 'team:join', 2000)) return;
       const team = db.teams.find(t => t.id === team_id);
@@ -425,7 +449,13 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
     socket.on('zone:confirm_defense', async ({ zone_id, team_id, problem_id }) => {
       if (!rateLimit(socket.id, `defense_confirm_${zone_id}`, 2000)) return;
       const zone = db.zones.find(z => z.id === zone_id);
-      if (!zone || zone.owner_team_id !== team_id) return;
+      // BUG FIX: this used to return silently on ownership mismatch — the
+      // team's client had no idea anything went wrong and the "Set Defense"
+      // modal just sat there forever with no explanation ("not working").
+      if (!zone || zone.owner_team_id !== team_id) {
+        socket.emit('zone:error', { message: 'You no longer own this zone — defense wasn\'t set.' });
+        return;
+      }
 
       const options = zone._defenseOptions || [];
       const problem = options.find(o => o.id === problem_id);
@@ -648,7 +678,18 @@ startBatteryDrain(db, io, saveDB);
       saveDB();
       const { answer: _hidden, ...safeQ } = q;
       io.emit('phase1:round_started', { round_number: round, question: safeQ, time_limit_seconds: q.time_limit_seconds });
-      emitStateDelta(io, { phase1_round: round, phase1_round_active: true, current_question: q }); // full q with answer
+      // SECURITY FIX: this used to broadcast `current_question` — including
+      // the correct answer — to every connected socket via the global
+      // state:delta, meaning any team could read the answer straight out of
+      // their own client state (React DevTools, or just the raw WebSocket
+      // frame) the instant a round started. Teams only ever need the
+      // answer-stripped `safeQ` above (phase1:round_started); the full
+      // question with its answer now goes ONLY to the admin's own socket
+      // below, which is the channel the admin panel actually listens to.
+      // Server-computed round deadline so admin (and anyone else) can show
+      // a real synced countdown instead of no timer at all.
+      db.app_state.phase1_round_end = new Date(Date.now() + q.time_limit_seconds * 1000).toISOString();
+      emitStateDelta(io, { phase1_round: round, phase1_round_active: true, phase1_round_end: db.app_state.phase1_round_end });
       socket.emit('admin:state_delta', { current_question: q }); // full question with answer — only to admin socket
       io.emit('toast:broadcast', { message: `⚡ Round ${round} — ${q.time_limit_seconds}s!`, type: 'info' });
     });
@@ -658,6 +699,12 @@ startBatteryDrain(db, io, saveDB);
       db.app_state.phase1_round_active = false;
       const round = db.app_state.phase1_round;
       const q = db.app_state.current_question;
+      // BUG FIX: current_question was never cleared here, so the admin
+      // panel's "ACTIVE QUESTION" card (with the answer shown) kept
+      // displaying the last question forever after the round ended,
+      // looking exactly like it was still live.
+      db.app_state.current_question = null;
+      db.app_state.phase1_round_end = null;
       const active = db.teams.filter(t => !t.is_eliminated).sort((a, b) => b.phase1_total_score - a.phase1_total_score);
       const count = Math.min(Math.max(0, parseInt(eliminate_count) || 0), active.length - 1);
       const toElim = active.slice(active.length - count);
@@ -674,7 +721,7 @@ startBatteryDrain(db, io, saveDB);
         emitTeamDelta(io, t, ['phase1_total_score', 'phase1_scores']);
       });
       saveDB();
-      emitStateDelta(io, { phase1_round_active: false });
+      emitStateDelta(io, { phase1_round_active: false, current_question: null, phase1_round_end: null });
       io.emit('phase1:round_ended', { round_number: round, correct_answer: q?.answer, eliminated_count: count, eliminated_ids: eliminatedIds });
       io.emit('leaderboard:phase1', getPhase1Board(db.teams));
       io.emit('toast:broadcast', { message: `Round ${round} ended. ${count} eliminated.`, type: 'warning' });
@@ -837,20 +884,38 @@ startBatteryDrain(db, io, saveDB);
 
     socket.on('admin:reveal_next', ({ admin_token }) => {
       if (!auth(admin_token)) return;
-      const idx = (db.app_state.results_reveal_index ?? -1) + 1;
-      db.app_state.results_reveal_index = idx;
       // Use getResultsBoard so the correct score field is used regardless of which
       // phases were enabled (fixes quiz-only / phase1-only events showing #0 ???)
       const phasesEnabled = db.app_state.event_config?.phases_enabled || [];
       const board = getResultsBoard(db.teams, phasesEnabled);
-      const revealBoard = [...board].reverse(); // worst → best
+      // BUG FIX: reveal_top_n lets the admin limit the dramatic reveal to just
+      // the top N teams (e.g. top 5) instead of clicking through the entire
+      // field — worst-of-the-top-N first, winner last.
+      const topN = db.app_state.event_config?.reveal_top_n || 0;
+      const limitedBoard = topN > 0 ? board.slice(0, topN) : board;
+      const revealBoard = [...limitedBoard].reverse(); // worst → best
+
+      const idx = (db.app_state.results_reveal_index ?? -1) + 1;
+
+      // BUG FIX: there was no bounds check here at all — clicking "Reveal
+      // Next" past the last team incremented the index anyway, produced
+      // `undefined` from the array, and broadcast a team:null announcement
+      // to every connected screen, rendering as a broken "??? — 0TH PLACE".
+      // Now it's capped, and only the admin who over-clicked gets told —
+      // nothing goes out to the other screens.
+      if (idx >= revealBoard.length) {
+        socket.emit('admin:error', { message: revealBoard.length === 0 ? 'No results to reveal yet.' : 'All positions already revealed — nothing more to show.' });
+        return;
+      }
+
+      db.app_state.results_reveal_index = idx;
       const revealed = revealBoard[idx];
       saveDB();
       io.emit('results:announce', {
         index: idx, total: revealBoard.length,
-        team: revealed || null,
-        actual_rank: revealed ? board.findIndex(t => t.team_id === revealed.team_id) : -1,
-        is_winner: revealed ? board.findIndex(t => t.team_id === revealed.team_id) === 0 : false,
+        team: revealed,
+        actual_rank: board.findIndex(t => t.team_id === revealed.team_id),
+        is_winner: idx === revealBoard.length - 1,
         is_last: idx >= revealBoard.length - 1,
         score_label: revealed?.score_label || null,
       });
@@ -964,6 +1029,7 @@ startBatteryDrain(db, io, saveDB);
           battery_drain_interval_ms: 60000, battery_drain_percent_per_tick: 2,
           phase3_problem: null, results_reveal_index: -1,
           master_paused: false, master_paused_at: null, master_pause_reason: '',
+          thankyou_shown: false,
           // Sprint 3: reset speed demo state
           speed_demo_current_team_id: null, speed_demo_timer_end: null,
           speed_demo_order: [], speed_demo_done_ids: [],
@@ -1040,8 +1106,16 @@ startBatteryDrain(db, io, saveDB);
     });
 
     // ── Thank You page trigger ─────────────────────────────────────
-    socket.on('admin:goto_thankyou', ({ admin_token }) => {
+    socket.on('admin:goto_thankyou', async ({ admin_token }) => {
       if (!auth(admin_token)) return;
+      // BUG FIX: this used to be a pure fire-and-forget broadcast with no
+      // persisted state — a participant could bypass it just by reloading
+      // the page (a fresh page load opens a new socket connection, which
+      // never received that one-off broadcast and has no way to know the
+      // event already ended). Persisting it means state:sync itself now
+      // carries the fact, so even a hard reload lands back on Thank You.
+      db.app_state.thankyou_shown = true;
+      await saveDBNow();
       io.emit('event:thankyou');
       log(io, db, 'phase_change', '🎉 Thank You page shown to all clients');
     });
@@ -1055,6 +1129,14 @@ startBatteryDrain(db, io, saveDB);
         college_name: String(config.college_name || '').trim(),
         phases_enabled: Array.isArray(config.phases_enabled) ? config.phases_enabled : ['phase1', 'phase2', 'phase3'],
         phase1_rounds: Math.max(1, Math.min(10, parseInt(config.phase1_rounds) || 5)),
+        // BUG FIX: quiz_num_questions/quiz_duration_min were missing from
+        // this rebuilt object entirely — the Config tab form sends them,
+        // but every save silently dropped them back to whatever patchDB's
+        // fallback defaults were (50/30), undoing whatever the admin just
+        // configured (this is the real reason "50 questions" could quietly
+        // become something else after any later config save).
+        quiz_num_questions: Math.max(5, Math.min(100, parseInt(config.quiz_num_questions) || 50)),
+        quiz_duration_min: Math.max(5, Math.min(120, parseInt(config.quiz_duration_min) || 30)),
         phase2_duration_min: Math.max(15, Math.min(240, parseInt(config.phase2_duration_min) || 90)),
         phase3_duration_min: Math.max(30, Math.min(360, parseInt(config.phase3_duration_min) || 150)),
         battery_drain_rate: Math.max(0.5, Math.min(10, parseFloat(config.battery_drain_rate) || 2)),
@@ -1064,6 +1146,11 @@ startBatteryDrain(db, io, saveDB);
         speed_demo_enabled: !!config.speed_demo_enabled,
         speed_demo_duration_sec: Math.max(30, Math.min(300, parseInt(config.speed_demo_duration_sec) || 90)),
         audience_weight_percent: Math.max(0, Math.min(30, parseInt(config.audience_weight_percent) || 10)),
+        reveal_top_n: Math.max(0, Math.min(200, parseInt(config.reveal_top_n) || 0)),
+        // BUG FIX: custom_questions wasn't included here either — every
+        // config save silently deleted every custom question the admin
+        // had added, with no warning.
+        custom_questions: db.app_state.event_config?.custom_questions || [],
       };
       await saveDBNow();
       io.emit('state:delta', { event_config: db.app_state.event_config });
@@ -1178,7 +1265,14 @@ startBatteryDrain(db, io, saveDB);
       const n = cfg.quiz_num_questions || 50;
       const durationMin = cfg.quiz_duration_min || 30;
       const customQ = cfg.custom_questions || [];
-      const questions = pickQuizQuestions(n, db.used_question_ids, customQ);
+      // BUG FIX: this used to pass db.used_question_ids — the SAME array
+      // Phase 1's gauntlet rounds push into — so every question already
+      // asked in Phase 1 got excluded from the quiz pool too, silently
+      // shrinking it below whatever was configured (e.g. "50 questions"
+      // showing up as 48 after 2 gauntlet rounds had already run). The
+      // quiz round is a separate assessment; it should draw from the full
+      // pool regardless of what Phase 1 already used.
+      const questions = pickQuizQuestions(n, [], customQ);
       db.app_state.quiz_questions = questions;
       db.app_state.quiz_member_answers = {};
       db.app_state.quiz_round_active = true;

@@ -4,6 +4,7 @@ import { Navbar, ToastContainer, BatteryBar, CountdownTimer } from '../component
 import { Phase1Leaderboard } from '../components/phase1/index.jsx';
 import { getSocket } from '../hooks/useSocket';
 import { useSound } from '../hooks/useSound';
+import { useCountdown } from '../hooks/useTimer';
 
 const PROBLEMS = [
   'Build a real-time feedback portal where users submit ratings and see live averages.',
@@ -119,6 +120,21 @@ export default function AdminDashboard() {
     if (authed && count > prevHelpCount.current) playSound('alert');
     prevHelpCount.current = count;
   }, [state.help_requests, authed]);
+
+  // Zone problem/answer visibility — pull-only (see server: never broadcast,
+  // so answers can't leak to teams/zone operators). Refreshed whenever the
+  // Zones tab is opened, plus a manual refresh button for mid-event use.
+  const [zoneIntel, setZoneIntel] = useState({});
+  useEffect(() => {
+    if (!authed || tab !== 'zones') return;
+    const socket = getSocket();
+    const onIntel = ({ intel }) => {
+      setZoneIntel(Object.fromEntries(intel.map(i => [i.zone_id, i])));
+    };
+    socket.on('admin:zone_intel', onIntel);
+    socket.emit('admin:request_zone_intel', { admin_token: sessionStorage.getItem('admin_session') || '' });
+    return () => socket.off('admin:zone_intel', onIntel);
+  }, [authed, tab]);
 
   const doLogin = async () => {
     if (!pin || loggingIn) return;
@@ -485,6 +501,9 @@ export default function AdminDashboard() {
                   <button className="btn-ghost" onClick={()=>emit('admin:adjust_timer',{phase:'phase3',delta_min:-15})} style={{ fontSize:12 }}>−15 min</button>
                 </div>
               )}
+                {phase==='phase1' && (
+                  <Phase1RoundStatus state={state} />
+                )}
                 {state.app_state.current_question && (
                   <div style={{ padding:'12px 16px', background:'rgba(255,170,0,0.1)', border:'1px solid rgba(255,170,0,0.3)', borderRadius:6, marginTop:10 }}>
                     <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--warning)', marginBottom:4 }}>ACTIVE QUESTION — Round {state.app_state.phase1_round}</div>
@@ -511,8 +530,13 @@ export default function AdminDashboard() {
               <div className="card card-lg" style={{ border:'1px solid var(--purple)' }}>
                 <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom:8, color:'var(--purple)' }}>DRAMATIC REVEAL</h3>
                 <div style={{ color:'var(--text3)', fontSize:13, marginBottom:16 }}>Each click reveals the next team on ALL screens simultaneously — worst to best.</div>
+                {/* BUG FIX: reveal_next had no cap — clicking past the last team broke the
+                    broadcast into a "??? — 0TH PLACE" state on every screen. The button now
+                    disables once everything's revealed instead of relying on the admin to notice. */}
                 <div style={{ display:'flex', gap:10 }}>
-                  <button className="btn-primary" onClick={()=>emit('admin:reveal_next',{})} style={{ flex:1, padding:14, fontSize:16 }}>▶ Reveal Next</button>
+                  <button className="btn-primary" onClick={()=>emit('admin:reveal_next',{})} disabled={state.announcement?.is_last} style={{ flex:1, padding:14, fontSize:16 }}>
+                    {state.announcement?.is_last ? '✓ All Revealed' : '▶ Reveal Next'}
+                  </button>
                   <button className="btn-ghost" onClick={()=>emit('admin:reset_reveal',{})}>Reset</button>
                 </div>
               </div>
@@ -552,10 +576,13 @@ export default function AdminDashboard() {
         {/* ── ZONES ─────────────────────────────────────────────── */}
         {tab==='zones'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            <div style={{ padding:'10px 14px', background:'rgba(0,170,255,0.08)', border:'1px solid rgba(0,170,255,0.2)', borderRadius:6 }}>
+            <div style={{ padding:'10px 14px', background:'rgba(0,170,255,0.08)', border:'1px solid rgba(0,170,255,0.2)', borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
               <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--info)' }}>Zone laptop URL format: <strong>http://[YOUR_IP]:5173/zone/[ZONE_ID]</strong></div>
+              <button className="btn-ghost" onClick={()=>getSocket().emit('admin:request_zone_intel',{admin_token:sessionStorage.getItem('admin_session')||''})} style={{ fontSize:11, padding:'4px 10px' }}>🔄 Refresh Answers</button>
             </div>
-            {state.zones.map((z,i)=>(
+            {state.zones.map((z,i)=>{
+              const intel = zoneIntel[z.id];
+              return (
               <div key={z.id} className="card" style={{ border:`1px solid ${z.owner_team_id?z.owner_color+'66':'var(--border)'}` }}>
                 <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
                   <div style={{ flex:1 }}>
@@ -572,8 +599,25 @@ export default function AdminDashboard() {
                     <span className={`badge ${z.owner_team_id?'badge-success':z.is_attempting?'badge-warning':'badge-info'}`}>{z.owner_team_id?'CAPTURED':z.is_attempting?'BUSY':'NEUTRAL'}</span>
                   </div>
                 </div>
+                {/* Answer visibility — pull-only, admin-only, so a coordinator can help a stuck team */}
+                {(intel?.defense_problem || intel?.active_challenge) && (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:'1px solid var(--border)', display:'flex', flexDirection:'column', gap:6 }}>
+                    {intel.active_challenge && (
+                      <div style={{ fontSize:12, color:'var(--warning)' }}>
+                        ⚡ <strong>{intel.active_challenge.attempting_team}</strong> is solving: <span style={{ color:'var(--text2)' }}>{intel.active_challenge.label}</span>
+                        {' → '}<span style={{ fontFamily:'var(--font-mono)', color:'var(--accent)' }}>{intel.active_challenge.answer}</span>
+                      </div>
+                    )}
+                    {intel.defense_problem && (
+                      <div style={{ fontSize:12, color:'var(--text3)' }}>
+                        🔒 Defense trap: <span style={{ color:'var(--text2)' }}>{intel.defense_problem.label}</span>
+                        {' → '}<span style={{ fontFamily:'var(--font-mono)', color:'var(--accent)' }}>{intel.defense_problem.answer}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
+            );})}
           </div>
         )}
 
@@ -1015,7 +1059,9 @@ export default function AdminDashboard() {
               <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom:8, color:'var(--purple)' }}>DRAMATIC REVEAL</h3>
               <div style={{ color:'var(--text3)', fontSize:13, marginBottom:16 }}>Full-screen overlay appears on ALL screens (teams, operators, spectator) simultaneously. Worst place → 1st place.</div>
               <div style={{ display:'flex', gap:10 }}>
-                <button className="btn-primary" onClick={()=>emit('admin:reveal_next',{})} style={{ flex:1, padding:14, fontSize:16 }}>▶ Reveal Next</button>
+                <button className="btn-primary" onClick={()=>emit('admin:reveal_next',{})} disabled={state.announcement?.is_last} style={{ flex:1, padding:14, fontSize:16 }}>
+                  {state.announcement?.is_last ? '✓ All Revealed' : '▶ Reveal Next'}
+                </button>
                 <button className="btn-ghost" onClick={()=>emit('admin:reset_reveal',{})}>Reset</button>
               </div>
             </div>
@@ -1660,6 +1706,60 @@ function QRTab({ state }) {
 }
 
 // ── Config Tab Component ─────────────────────────────────────────
+// BUG FIX: admin previously had no clear signal for whether a Phase 1
+// round was actually live, ended, or hadn't started — just the Start/End
+// buttons quietly changing disabled state, with no timer at all. This
+// makes it unambiguous, using the server-computed phase1_round_end so the
+// countdown is synced rather than guessed.
+function Phase1RoundStatus({ state }) {
+  const { phase1_round_active, phase1_round, phase1_round_end } = state.app_state;
+  const timer = useCountdown(phase1_round_active ? phase1_round_end : null);
+  const timesUp = phase1_round_active && timer?.isDone;
+
+  if (!phase1_round_active) {
+    return (
+      <div style={{ marginTop:10, padding:'8px 14px', background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>
+        {phase1_round > 0 ? `⏹ Round ${phase1_round} ended — click "Start Round ${phase1_round + 1}" when ready.` : '⏳ No round started yet.'}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      marginTop:10, padding:'10px 16px', borderRadius:6, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
+      background: timesUp ? 'rgba(255,51,85,0.12)' : 'rgba(0,255,136,0.08)',
+      border: `1px solid ${timesUp ? 'var(--danger)' : 'var(--accent)'}`,
+    }}>
+      <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color: timesUp ? 'var(--danger)' : 'var(--accent)', fontWeight:700 }}>
+        {timesUp ? "⏰ TIME'S UP" : '● ROUND LIVE'}
+      </span>
+      <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text2)' }}>Round {phase1_round}</span>
+      {timer && <span style={{ fontFamily:'var(--font-mono)', fontSize:16, fontWeight:700, color: timesUp ? 'var(--danger)' : 'var(--text)', marginLeft:'auto' }}>{timer.formatted}</span>}
+      {timesUp && <span style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--danger)' }}>→ click "End + Eliminate" above</span>}
+    </div>
+  );
+}
+
+// BUG FIX: this used to be defined *inside* ConfigTab's render body. Every
+// keystroke called setForm, which re-rendered ConfigTab, which redefined F
+// as a brand-new function — React then saw a different component type on
+// every render and remounted the <input> from scratch, killing focus after
+// every single character (type "n", input loses focus, click back in, type
+// "i", ...). Hoisting it to module scope gives it a stable identity across
+// renders, so React reconciles it as the same input and focus survives.
+function ConfigField({ form, setForm, label, field, type='number', min, max, step=1, unit='' }) {
+  return (
+    <div>
+      <label style={{ display:'block', fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:4, textTransform:'uppercase' }}>
+        {label}{unit ? ` (${unit})` : ''}
+      </label>
+      <input type={type} value={form[field]} min={min} max={max} step={step}
+        onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
+        style={{ fontFamily:'var(--font-mono)', fontSize:15 }} />
+    </div>
+  );
+}
+
 function ConfigTab({ state, emit }) {
   const cfg = state.app_state.event_config || {};
   const [form, setForm] = useState({
@@ -1678,6 +1778,7 @@ function ConfigTab({ state, emit }) {
     speed_demo_enabled: cfg.speed_demo_enabled || false,
     speed_demo_duration_sec: String(cfg.speed_demo_duration_sec ?? 90),
     audience_weight_percent: String(cfg.audience_weight_percent ?? 10),
+    reveal_top_n: String(cfg.reveal_top_n ?? 0),
   });
 
   const togglePhase = (p) => {
@@ -1701,28 +1802,17 @@ function ConfigTab({ state, emit }) {
       battery_capture_gain: parseFloat(form.battery_capture_gain) || 20,
       speed_demo_duration_sec: parseInt(form.speed_demo_duration_sec) || 90,
       audience_weight_percent: parseInt(form.audience_weight_percent) || 10,
+      reveal_top_n: parseInt(form.reveal_top_n) || 0,
     }});
   };
-
-  // F component: stores raw string, no conversion on keystroke
-  const F = ({ label, field, type='number', min, max, step=1, unit='' }) => (
-    <div>
-      <label style={{ display:'block', fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:4, textTransform:'uppercase' }}>
-        {label}{unit ? ` (${unit})` : ''}
-      </label>
-      <input type={type} value={form[field]} min={min} max={max} step={step}
-        onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
-        style={{ fontFamily:'var(--font-mono)', fontSize:15 }} />
-    </div>
-  );
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
       <div className="card card-lg" style={{ border:'1px solid var(--info)' }}>
         <h2 style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom:16, color:'var(--info)' }}>⚙️ EVENT CONFIGURATION</h2>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:16 }}>
-          <F label="Event Name" field="event_name" type="text" />
-          <F label="College / Org Name" field="college_name" type="text" />
+          <ConfigField form={form} setForm={setForm} label="Event Name" field="event_name" type="text" />
+          <ConfigField form={form} setForm={setForm} label="College / Org Name" field="college_name" type="text" />
         </div>
 
         <div style={{ marginBottom:16 }}>
@@ -1743,25 +1833,25 @@ function ConfigTab({ state, emit }) {
         </div>
 
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:16 }}>
-          <F label="Phase 1 Rounds" field="phase1_rounds" min={1} max={10} />
-          <F label="Phase 2 Duration" field="phase2_duration_min" min={15} max={240} unit="min" />
-          <F label="Phase 3 Duration" field="phase3_duration_min" min={30} max={360} unit="min" />
+          <ConfigField form={form} setForm={setForm} label="Phase 1 Rounds" field="phase1_rounds" min={1} max={10} />
+          <ConfigField form={form} setForm={setForm} label="Phase 2 Duration" field="phase2_duration_min" min={15} max={240} unit="min" />
+          <ConfigField form={form} setForm={setForm} label="Phase 3 Duration" field="phase3_duration_min" min={30} max={360} unit="min" />
         </div>
 
         <div style={{ marginBottom:16 }}>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Quiz Round Settings (Phase 1.5)</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <F label="Number of Questions" field="quiz_num_questions" min={5} max={100} />
-            <F label="Quiz Duration" field="quiz_duration_min" min={5} max={120} unit="min" />
+            <ConfigField form={form} setForm={setForm} label="Number of Questions" field="quiz_num_questions" min={5} max={100} />
+            <ConfigField form={form} setForm={setForm} label="Quiz Duration" field="quiz_duration_min" min={5} max={120} unit="min" />
           </div>
         </div>
 
         <div style={{ marginBottom:16 }}>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Battery Settings</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
-            <F label="Drain Rate" field="battery_drain_rate" min={0.5} max={10} step={0.5} unit="%/min" />
-            <F label="Attempt Cost" field="battery_attempt_cost" min={0} max={30} unit="%" />
-            <F label="Capture Gain" field="battery_capture_gain" min={0} max={50} unit="%" />
+            <ConfigField form={form} setForm={setForm} label="Drain Rate" field="battery_drain_rate" min={0.5} max={10} step={0.5} unit="%/min" />
+            <ConfigField form={form} setForm={setForm} label="Attempt Cost" field="battery_attempt_cost" min={0} max={30} unit="%" />
+            <ConfigField form={form} setForm={setForm} label="Capture Gain" field="battery_capture_gain" min={0} max={50} unit="%" />
           </div>
         </div>
 
@@ -1778,10 +1868,20 @@ function ConfigTab({ state, emit }) {
           </div>
           {form.speed_demo_enabled&&(
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-              <F label="Demo Duration Per Team" field="speed_demo_duration_sec" min={30} max={300} unit="sec" />
-              <F label="Audience Vote Weight" field="audience_weight_percent" min={0} max={30} unit="% of score" />
+              <ConfigField form={form} setForm={setForm} label="Demo Duration Per Team" field="speed_demo_duration_sec" min={30} max={300} unit="sec" />
+              <ConfigField form={form} setForm={setForm} label="Audience Vote Weight" field="audience_weight_percent" min={0} max={30} unit="% of score" />
             </div>
           )}
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Results Reveal</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <ConfigField form={form} setForm={setForm} label="Reveal Top N Places (0 = everyone)" field="reveal_top_n" min={0} max={200} />
+          </div>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:6 }}>
+            Limits the dramatic one-by-one reveal to just the top N teams instead of clicking through the whole field — useful for large events.
+          </div>
         </div>
 
         {/* ── Event Templates ─────────────────────────────── */}
