@@ -94,11 +94,36 @@ export default function Spectator() {
     return () => cancelAnimationFrame(frame);
   }, [tickerItems.length]);
 
+  // A persistent per-device id so refreshing the spectator page doesn't
+  // hand out another vote (the server dedupes on it).
+  const voterId = useRef(null);
+  if (!voterId.current) {
+    const fresh = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      let v = localStorage.getItem('dominance_voter_id');
+      if (!v) { v = fresh; localStorage.setItem('dominance_voter_id', v); }
+      voterId.current = v;
+    } catch {
+      voterId.current = fresh; // private mode — at least one vote per tab
+    }
+  }
+
   const castVote = (team_id) => {
     if (hasVoted) return;
-    getSocket().emit('audience:vote', { team_id });
+    getSocket().emit('audience:vote', { team_id, voter_id: voterId.current });
     setHasVoted(true);
   };
+
+  // Remember across reloads that this device already voted
+  useEffect(() => {
+    const socket = getSocket();
+    const onResult = (d) => {
+      if (d?.ok === false) setHasVoted(true); // already counted from this device
+      try { localStorage.setItem('dominance_voted_phase', 'yes'); } catch { /* ignore */ }
+    };
+    socket.on('audience:vote_result', onResult);
+    return () => socket.off('audience:vote_result', onResult);
+  }, []);
 
   // ── Hype mode: sound effects + flash on key moments ──────────────
   const { muted, toggleMute, play } = useSound();

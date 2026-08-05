@@ -44,6 +44,9 @@ export default function JoinTeam() {
       socket.off('team:joined', onJoined); socket.off('error', onErr);
       sessionStorage.setItem('team_id', team.id);
       sessionStorage.setItem('team_passcode', team.passcode);
+      // Roster is team-private (never in public broadcasts) — the quiz
+      // uses it to offer a name picker instead of free-text entry.
+      sessionStorage.setItem('team_members', JSON.stringify(team.members || []));
       navigate(`/team/${team.id}`);
     };
     const onErr = ({ message }) => {

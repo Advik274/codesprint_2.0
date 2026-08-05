@@ -9,6 +9,7 @@ import { registerSocketEvents } from './sockets/events.js';
 import { debounce } from './lib/utils.js';
 import { login, authAdmin } from './lib/auth.js';
 import { startSnapshots, listSnapshots, restoreSnapshot, snapshotNow, listArchives, readArchive } from './lib/snapshots.js';
+import { recordFailure, isBlocked, PASSCODE_LIMITS } from './lib/ratelimit.js';
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -33,6 +34,11 @@ process.on('unhandledRejection', (err) => {
 });
 
 const app = express();
+// Behind a hosting proxy (Render/Railway/Fly) req.ip is the proxy's
+// address unless we trust the forwarding header — without this both the
+// login lockout and the passcode rate limiter would see every visitor as
+// one client. Harmless on a local hotspot, where there is no proxy.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 
 const allowedOrigins = process.env.CLIENT_URL
@@ -140,6 +146,7 @@ export const EMPTY_DB = () => ({
   },
   teams: [], zones: [],
   audience_votes: {},  // { team_id: vote_count }
+  audience_voters: {}, // { voter_id: team_id } — one vote per device
   used_question_ids: [], used_zone_problem_ids: [],
   event_log: [],
   phase_history: [],  // V2: rollback snapshots
@@ -214,6 +221,7 @@ function patchDB() {
   if (s.speed_demo_order === undefined) s.speed_demo_order = [];
   if (s.speed_demo_done_ids === undefined) s.speed_demo_done_ids = [];
   if (!db.audience_votes) db.audience_votes = {};
+  if (!db.audience_voters) db.audience_voters = {};
   if (!db.help_requests) db.help_requests = [];
   // V7: patch teams for quiz_score and phase3_group
   db.teams.forEach(t => {
@@ -294,10 +302,34 @@ app.post('/api/admin/login', (req, res) => {
   res.json({ token: result.token, role: result.role });
 });
 
-// V7: Passcode-only team lookup — replaces dropdown for 340+ teams
+// V7: Passcode-only team lookup — replaces dropdown for 340+ teams.
+//
+// SECURITY FIX: this was public and unmetered, so all 9000 four-digit
+// passcodes could be enumerated in about nine seconds — enough to join
+// as any team and submit answers on their behalf. Failed lookups are now
+// rate limited per IP, with a global circuit breaker for the case where
+// everyone shares one NAT address. Correct lookups are never throttled.
 app.get('/api/team-by-passcode/:code', (req, res) => {
-  const team = db.teams.find(t => t.passcode === req.params.code);
-  if (!team) return res.status(404).json({ error: 'Invalid passcode' });
+  const ipKey = `pc:${req.ip}`;
+  const blocked = isBlocked(ipKey, PASSCODE_LIMITS.PER_IP);
+  const globalBlocked = isBlocked('pc:global', PASSCODE_LIMITS.GLOBAL);
+  if (blocked.blocked || globalBlocked.blocked) {
+    const retry = Math.max(blocked.retryAfterSec, globalBlocked.retryAfterSec);
+    res.setHeader('Retry-After', String(retry));
+    return res.status(429).json({ error: `Too many incorrect codes. Try again in ${retry}s, or ask a coordinator.` });
+  }
+
+  const code = String(req.params.code || '');
+  const team = /^\d{4}$/.test(code) ? db.teams.find(t => t.passcode === code) : null;
+
+  if (!team) {
+    const perIp = recordFailure(ipKey, PASSCODE_LIMITS.PER_IP, PASSCODE_LIMITS.PER_IP_WINDOW_MS);
+    const global = recordFailure('pc:global', PASSCODE_LIMITS.GLOBAL, PASSCODE_LIMITS.GLOBAL_WINDOW_MS);
+    if (perIp.blocked || global.blocked) {
+      console.warn(`[security] passcode lookups throttled — ip=${req.ip}${global.blocked ? ' (global threshold hit — possible enumeration attempt)' : ''}`);
+    }
+    return res.status(404).json({ error: 'Invalid passcode' });
+  }
   res.json({ id: team.id, name: team.name, color: team.color, year: team.year });
 });
 

@@ -24,6 +24,11 @@ export function QuizRound({ teamId, state }) {
   const [filter, setFilter] = useState('all'); // 'all' | 'unanswered'
 
   const rawQuestions = app_state.quiz_questions || [];
+  // The team's own roster, stashed privately at join time
+  const roster = (() => {
+    try { const r = JSON.parse(sessionStorage.getItem('team_members') || '[]'); return Array.isArray(r) ? r.filter(Boolean) : []; }
+    catch { return []; }
+  })();
 
   // BUG FIX 1: Shuffle questions once per quiz session, per client.
   // We track the quiz session by question count + first question id to detect a new quiz start.
@@ -52,17 +57,30 @@ export function QuizRound({ teamId, state }) {
     setAnswers(prev => ({ ...prev, [qId]: answer }));
   }, []);
 
+  // BUG FIX: this ignored the server's reply entirely and marked the
+  // submission successful either way (even on the 3s fallback), so a
+  // rejected submission — wrong name, roster mismatch, cap reached —
+  // looked exactly like a successful one and the member never knew their
+  // answers hadn't counted.
+  const [submitError, setSubmitError] = useState('');
   const handleSubmitAll = () => {
     if (!memberName.trim()) return;
+    setSubmitError('');
     setSubmitLoading(true);
     const socket = getSocket();
-    socket.emit('quiz:submit_answers', { team_id: teamId, member_name: memberName.trim(), answers });
-    socket.once('quiz:answers_received', () => {
-      setSubmitted(true);
+    const onReply = (d) => {
+      clearTimeout(timer);
       setSubmitLoading(false);
-    });
-    // Fallback timeout
-    setTimeout(() => { setSubmitted(true); setSubmitLoading(false); }, 3000);
+      if (d?.error) setSubmitError(d.error);
+      else setSubmitted(true);
+    };
+    socket.once('quiz:answers_received', onReply);
+    socket.emit('quiz:submit_answers', { team_id: teamId, member_name: memberName.trim(), answers });
+    const timer = setTimeout(() => {
+      socket.off('quiz:answers_received', onReply);
+      setSubmitLoading(false);
+      setSubmitError('No response from the server — check your connection and try again.');
+    }, 8000);
   };
 
   const displayQ = filter === 'unanswered'
@@ -121,6 +139,30 @@ export function QuizRound({ teamId, state }) {
           <label style={{ display: 'block', fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 6, textTransform: 'uppercase' }}>
             Your Name (as registered)
           </label>
+          {/* When the team has a registered roster, pick from it — the
+              server validates against the same list, so free-typing a
+              name that isn't on it would just be rejected. */}
+          {roster.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {roster.map(n => {
+                const taken = !!app_state.quiz_member_answers?.[teamId]?.[n];
+                const selected = memberName === n;
+                return (
+                  <button key={n} onClick={() => setMemberName(n)} disabled={taken} style={{
+                    textAlign: 'left', padding: '11px 14px', borderRadius: 6,
+                    background: selected ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'var(--bg3)',
+                    border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+                    color: taken ? 'var(--text3)' : selected ? 'var(--accent)' : 'var(--text)',
+                    fontFamily: 'var(--font-body)', fontSize: 14,
+                    textTransform: 'none', letterSpacing: 'normal',
+                    opacity: taken ? 0.55 : 1, cursor: taken ? 'not-allowed' : 'pointer',
+                  }}>
+                    {selected ? '● ' : taken ? '✓ ' : '○ '}{n}{taken ? '  — already submitted' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
           <input
             type="text"
             placeholder="e.g. Aarav Kumar"
@@ -130,6 +172,7 @@ export function QuizRound({ teamId, state }) {
             style={{ fontFamily: 'var(--font-body)', fontSize: 15, borderColor: nameInOtherTeam ? 'var(--danger)' : undefined }}
             autoFocus
           />
+          )}
           {nameInSameTeam && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', marginTop: 6 }}>
               ✅ You already submitted answers — click Start to review your submission status.
@@ -282,6 +325,11 @@ export function QuizRound({ teamId, state }) {
           {answered}/{total} questions answered
           {answered < total && <span style={{ color: 'var(--warning)' }}> · {total - answered} remaining</span>}
         </div>
+        {submitError && (
+          <div style={{ padding: '10px 14px', marginBottom: 10, borderRadius: 6, border: '1px solid var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', color: 'var(--danger)', fontSize: 13, lineHeight: 1.5, textAlign: 'center' }}>
+            ❌ {submitError}
+          </div>
+        )}
         <button className="btn-primary" onClick={handleSubmitAll} disabled={submitLoading || answered === 0}
           style={{ width: '100%', padding: 14, fontSize: 15 }}>
           {submitLoading ? 'Submitting...' : `Submit All Answers (${answered}/${total})`}

@@ -6,7 +6,8 @@ import { buildClientState, sanitizeQuestion } from '../index.js';
 import { authAdmin, authZone } from '../lib/auth.js';
 import { archiveEvent, snapshotNow } from '../lib/snapshots.js';
 import { isAnswerCorrect } from '../lib/utils.js';
-import { pickTeamColor, generatePasscode, validateSelfRegistration } from '../lib/registration.js';
+import { pickTeamColor, generatePasscode, validateSelfRegistration, LIMITS } from '../lib/registration.js';
+import { recordFailure, isBlocked, clearKey, PASSCODE_LIMITS } from '../lib/ratelimit.js';
 
 // One shape for a brand-new team, used by BOTH the admin Setup tab and
 // the public self-registration QR flow so they can never diverge.
@@ -166,16 +167,31 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
     });
     socket.on('team:join', ({ team_id, passcode }) => {
       if (!rateLimit(socket.id, 'team:join', 2000)) return;
+      // SECURITY FIX: the per-socket limit above is trivially bypassed by
+      // reconnecting, so failed joins are also counted per IP — otherwise
+      // guessing passcodes here is just a slower version of the REST
+      // enumeration hole. Successful joins never consume budget.
+      const ipKey = `join:${socket.handshake.address}`;
+      if (isBlocked(ipKey, PASSCODE_LIMITS.PER_IP).blocked) {
+        socket.emit('error', { message: 'Too many failed attempts — wait a few minutes or ask a coordinator.' });
+        return;
+      }
       const team = db.teams.find(t => t.id === team_id);
       if (!team || team.passcode !== String(passcode)) {
+        recordFailure(ipKey, PASSCODE_LIMITS.PER_IP, PASSCODE_LIMITS.PER_IP_WINDOW_MS);
         socket.emit('error', { message: 'Invalid team or passcode' }); return;
       }
+      clearKey(ipKey);
       socket.join(`team_${team_id}`);
       bindSocketTeam(socket.id, team_id); // this socket is now verified as team_id
       // Send only this team's private data (including passcode) to them specifically
       socket.emit('team:joined', {
         team: {
           id: team.id, name: team.name, color: team.color, year: team.year,
+          // Their own roster — lets the quiz offer a name picker instead of
+          // free text (the server validates against this list either way).
+          // Public broadcasts still strip members; this is team-private.
+          members: team.members || [],
           passcode: team.passcode, battery: team.battery,
           is_eliminated: team.is_eliminated, zones_captured: team.zones_captured,
           phase1_total_score: team.phase1_total_score,
@@ -630,8 +646,17 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
       io.emit('zone:removed', { zone_id });
     });
 
+    // Every phase the app knows how to render. Guarding against a typo'd
+    // or stale phase name keeps the event out of a state where no screen
+    // has anything to show.
+    const KNOWN_PHASES = ['setup', 'phase1', 'quiz_round', 'bug_hunt', 'code_strike', 'phase2', 'phase3', 'speed_demo', 'results'];
+
     socket.on('admin:start_phase', async ({ phase, admin_token }) => {
       if (!auth(admin_token)) return;
+      if (!KNOWN_PHASES.includes(phase)) {
+        socket.emit('admin:error', { message: `Unknown phase "${phase}" — ignored.` });
+        return;
+      }
 
       // V2: Snapshot current state before transitioning (enables rollback)
       if (!db.phase_history) db.phase_history = [];
@@ -645,6 +670,22 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
             phase1_total_score: t.phase1_total_score, phase1_scores: [...(t.phase1_scores || [])],
             battery: t.battery, zones_captured: t.zones_captured,
             zone_ids_captured: [...(t.zone_ids_captured || [])],
+            // BUG FIX: the snapshot only covered Phase 1/2 fields, so a
+            // rollback silently left every mission score in place — the
+            // "undo" lied about what it had undone. All scoring state a
+            // phase can produce now travels with the snapshot.
+            quiz_score: t.quiz_score, quiz_marks_scored: t.quiz_marks_scored,
+            quiz_member_scores: { ...(t.quiz_member_scores || {}) },
+            bughunt_submission: t.bughunt_submission ? JSON.parse(JSON.stringify(t.bughunt_submission)) : null,
+            bughunt_results: t.bughunt_results ? JSON.parse(JSON.stringify(t.bughunt_results)) : null,
+            bughunt_score: t.bughunt_score,
+            codestrike_submissions: JSON.parse(JSON.stringify(t.codestrike_submissions || {})),
+            codestrike_judge: t.codestrike_judge ? JSON.parse(JSON.stringify(t.codestrike_judge)) : null,
+            codestrike_score: t.codestrike_score,
+            tiebreak_wins: t.tiebreak_wins,
+            violations: t.violations ? { ...t.violations } : null,
+            phase3_submission: t.phase3_submission ? { ...t.phase3_submission } : null,
+            phase3_judge_scores: t.phase3_judge_scores ? { ...t.phase3_judge_scores } : null,
           })),
           zones_state: db.zones.map(z => ({
             id: z.id, owner_team_id: z.owner_team_id, owner_name: z.owner_name,
@@ -715,6 +756,7 @@ startBatteryDrain(db, io, saveDB);
         db.app_state.speed_demo_current_team_id = null;
         db.app_state.speed_demo_timer_end = null;
         db.audience_votes = {};
+        db.audience_voters = {}; // per-device ledger, cleared with the tally
         // Initialise vote counts to 0
         demoTeams.forEach(id => { db.audience_votes[id] = 0; });
       }
@@ -1194,6 +1236,7 @@ startBatteryDrain(db, io, saveDB);
         used_question_ids: [], used_zone_problem_ids: [],
         event_log: [], phase_history: [],
         audience_votes: {}, // Sprint 3: clear votes on reset
+        audience_voters: {},
         help_requests: [],
       };
       snapshotNow(db); // extra local recovery point, in addition to the archive above
@@ -1353,13 +1396,34 @@ startBatteryDrain(db, io, saveDB);
 
     // ── Sprint 3: Audience voting (spectator page, no auth) ───────
     // Rate-limited to 1 vote per socket per entire speed_demo phase
-    socket.on('audience:vote', ({ team_id }) => {
+    socket.on('audience:vote', ({ team_id, voter_id }) => {
       if (db.app_state.current_phase !== 'speed_demo') return;
       if (!rateLimit(socket.id, 'audience:vote', 999_999_999)) return; // one vote ever per socket
       if (!db.audience_votes) db.audience_votes = {};
       if (!db.teams.find(t => t.id === team_id && !t.is_eliminated)) return;
+      // BUG FIX: "one vote per socket" meant reloading the spectator page
+      // granted another vote — five reloads, five votes. The browser now
+      // sends a persistent per-device id so a refresh is recognised as the
+      // same voter. Not proof against someone clearing storage, but it
+      // stops casual ballot-stuffing, which is what actually happens.
+      if (!db.audience_voters) db.audience_voters = {};
+      const voter = typeof voter_id === 'string' ? voter_id.trim().slice(0, 64) : '';
+      // A device id is required: without one there is nothing to dedupe
+      // on, which is exactly the hole this closes. Real browsers always
+      // send one (the spectator page falls back to a per-tab id if
+      // localStorage is unavailable).
+      if (!voter) {
+        socket.emit('audience:vote_result', { ok: false, message: 'Could not identify this device — reload the page and vote again.' });
+        return;
+      }
+      if (db.audience_voters[voter]) {
+        socket.emit('audience:vote_result', { ok: false, message: 'You have already voted from this device.' });
+        return;
+      }
+      db.audience_voters[voter] = team_id;
       db.audience_votes[team_id] = (db.audience_votes[team_id] || 0) + 1;
       saveDB();
+      socket.emit('audience:vote_result', { ok: true });
       io.emit('audience:votes', db.audience_votes);
     });
 
@@ -1583,6 +1647,31 @@ startBatteryDrain(db, io, saveDB);
         return;
       }
       if (!db.app_state.quiz_member_answers[team_id]) db.app_state.quiz_member_answers[team_id] = {};
+
+      // SECURITY FIX: a team's quiz score is the AVERAGE across whoever
+      // submits, and nothing used to check that a submitter was actually
+      // on the team. One person who knew the answers could submit again
+      // and again under invented names and drag the average up — measured
+      // at 86 vs 43 against a team that played honestly. Submissions are
+      // now matched against the registered roster; teams registered
+      // without one instead get a hard cap on distinct submitters.
+      const roster = (team.members || []).map(m => String(m).trim().toLowerCase()).filter(Boolean);
+      const already = Object.keys(db.app_state.quiz_member_answers[team_id]);
+      if (roster.length > 0) {
+        if (!roster.includes(cleanName.toLowerCase())) {
+          socket.emit('quiz:answers_received', {
+            member_name: cleanName, count: 0,
+            error: `"${cleanName}" isn't on ${team.name}'s roster. Use your registered name exactly, or ask a coordinator to fix it.`,
+          });
+          return;
+        }
+      } else if (already.length >= LIMITS.MAX_MEMBERS) {
+        socket.emit('quiz:answers_received', {
+          member_name: cleanName, count: 0,
+          error: `${team.name} already has ${already.length} submissions — that's the maximum.`,
+        });
+        return;
+      }
 
       // BUGFIX: Prevent re-submission — once a member has submitted, lock it server-side
       if (db.app_state.quiz_member_answers[team_id][cleanName]) {

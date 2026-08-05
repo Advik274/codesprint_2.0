@@ -66,6 +66,7 @@ export default function SelfRegister() {
       socket.off('team:joined', onJoined); socket.off('error', onErr);
       sessionStorage.setItem('team_id', team.id);
       sessionStorage.setItem('team_passcode', team.passcode);
+      sessionStorage.setItem('team_members', JSON.stringify(team.members || []));
       navigate(`/team/${team.id}`);
     };
     const onErr = ({ message }) => {

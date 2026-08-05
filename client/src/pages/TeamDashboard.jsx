@@ -28,9 +28,25 @@ export default function TeamDashboard() {
     // don't keep room membership across a reconnect, so targeted server
     // emits (defense prompts, individual problem reveals) would otherwise
     // silently stop reaching this team until a manual page refresh.
+    // Keep the private roster fresh across reconnects (admin may have
+    // edited it) so the quiz name picker stays accurate.
+    const onJoined = ({ team }) => {
+      if (team?.members) sessionStorage.setItem('team_members', JSON.stringify(team.members));
+    };
+    socket.on('team:joined', onJoined);
     const rejoin = () => socket.emit('team:join', { team_id: teamId, passcode: teamPasscode });
+    // BUG FIX: the server only trusts sockets that have passed team:join,
+    // and a page reload always creates a brand-new socket. This used to
+    // re-join ONLY on reconnect — but a reload isn't a reconnect (the
+    // "have I connected before" flag lives in module scope and resets
+    // with the page), so a team that refreshed mid-event was left with an
+    // unbound socket: quiz, Bug Hunt, Code Strike, tie-break, Phase 1
+    // answers and the help button all silently stopped working until they
+    // went back and re-entered their passcode. Bind on mount too — the
+    // same thing ZoneOperator already does for zone laptops.
+    rejoin();
     const unsub = onSocketReconnect(rejoin);
-    return () => { socket.off('team:eliminated'); socket.off('phase3:problem_revealed'); unsub(); };
+    return () => { socket.off('team:eliminated'); socket.off('phase3:problem_revealed'); socket.off('team:joined', onJoined); unsub(); };
   }, [teamId]);
 
   useEffect(() => {
