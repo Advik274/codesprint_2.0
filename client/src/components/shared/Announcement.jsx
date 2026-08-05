@@ -146,7 +146,10 @@ export function AnnouncementOverlay() {
 
         {ann.is_winner && (
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--text3)', letterSpacing: '0.2em', marginTop: 8 }}>
-            CODE SPRINT 2.0 CHAMPION
+            {/* BUG FIX: this was hardcoded "CODE SPRINT 2.0 CHAMPION" — the
+                single most-photographed moment of the event announced the
+                wrong event's name on the projector. */}
+            {(state.app_state?.event_config?.event_name || 'EVENT').toUpperCase()} CHAMPION
           </div>
         )}
       </div>
@@ -157,7 +160,7 @@ export function AnnouncementOverlay() {
 function ConfettiRain() {
   const pieces = Array.from({ length: 80 }, (_, i) => ({
     id: i,
-    color: ['#FFD700', '#00ff88', '#00aaff', '#aa55ff', '#ff3355', '#ffffff', '#ffaa00'][i % 7],
+    color: ['#FFD700', '#e3b341', '#e8863a', '#e04340', '#6ea7c2', '#f0e6d2', '#b8709b'][i % 7],
     left: `${Math.random() * 100}%`,
     delay: `${Math.random() * 2}s`,
     duration: `${2.5 + Math.random() * 2.5}s`,

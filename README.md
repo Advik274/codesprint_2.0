@@ -3,6 +3,25 @@
 
 ---
 
+## ⚔️ CODE ARENA 2026 SUPPORT (new round types)
+
+The platform now also runs the **CODE ARENA 2026** event format (Reboot Club) — three missions selected through the same `phases_enabled` config every other event uses. Nothing about the older phases changed; these are additional round types the admin can enable:
+
+| Mission | Phase key | What it is | Default |
+|---|---|---|---|
+| Mission 1 — Intelligence Scan | `quiz_round` (existing) | 20 MCQs from a new multi-topic bank (Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning) — pick the bank in Config | 20 Q · 25 min · 20 marks |
+| Mission 2 — Bug Hunt | `bug_hunt` (new) | 5 buggy programs (Java/C++/Python), teams type the corrected line; auto-graded by the lenient matcher with per-program admin override | 5 programs · 30 min · 30 marks |
+| Mission 3 — Code Strike | `code_strike` (new) | 3 problems (Easy 10 / Medium 15 / Hard 25) revealed with a live timer; teams paste final code per problem; judge panel scores correctness + efficiency, time bonus is automatic | 45 min · 50 marks |
+| Tie Breaker | Tie-Break tab (any time) | Admin fires a rapid-fire question at the tied teams — server timestamps answers, first correct team wins ⚡ | — |
+
+- **Combined leaderboard** — when Bug Hunt or Code Strike is enabled, Results/Spectator/reveal all switch to summed mission marks (`/100` with the defaults) with tie-break wins ordering equal totals.
+- **🔒 Protected Mode** — one toggle in the admin Setup tab: during quiz / Bug Hunt / tie-breaks, team browsers block copy/paste + right-click and every tab/app switch is reported live to admin with a per-team violation counter (Code Strike exempt — teams need their editor). It's detection + deterrence: it can't see a second device, so keep floor volunteers.
+- **Quick start**: Config tab → **⚔️ CODE ARENA 2026** template → Save. Then per mission: advance the phase in Control, and run it from its own tab (🧠 Quiz / 🐛 Bug Hunt / ⚔️ Code Strike).
+- **Security**: quiz/bug-hunt/tie-break answers and Code Strike judge notes are stripped from every team-facing payload (this pass also fixed the quiz round leaking its answers via `state:sync` — see below).
+- Content lives in `server/lib/questions.js` (`ARENA_MCQ_POOL`, `BUG_HUNT_PROGRAMS`, `CODE_STRIKE_PROBLEMS`, `RAPID_FIRE_QUESTIONS`); tests in `server/test/arena.test.js`.
+
+---
+
 ## ✨ WHAT'S NEW
 
 ### Security & reliability
@@ -49,12 +68,8 @@ cd server && npm install
 cd ../client && npm install
 ```
 
-### Step 2 — Seed the database
-```bash
-cd server
-node data/seed.js
-```
-This creates all 10 teams, 6 zones, 25 questions. Run again to reset.
+### Step 2 — First run creates the database automatically
+There is no seed script anymore — the server creates a fresh `data/db.json` on first start. Teams are registered from the admin **Setup tab** (individually or via Bulk CSV Import), zones from **Zone Setup**. To wipe everything for a new event use **⚠️ Reset tab → Factory Reset** (it auto-archives the old event first).
 
 ### Step 3 — Start everything
 ```bash
@@ -97,7 +112,7 @@ Team passcodes are now auto-generated per team at registration (no fixed list) �
 ## 📋 EVENT DAY FLOW
 
 ### Before participants arrive:
-1. Run `node data/seed.js` to reset everything clean
+1. Factory Reset from the ⚠️ Reset tab (archives the previous event, wipes clean)
 2. Start servers with `npx concurrently ...`
 3. Open `/admin` on your laptop
 4. Open `/spectator` on projector
@@ -197,7 +212,7 @@ There's no client test suite yet — client-side changes are still best verified
 → Make sure laptop and phones are on the same hotspot/WiFi. Use your laptop's local IP (not localhost).
 
 **db.json not found error?**
-→ Run `node data/seed.js` first.
+→ Just start the server — it creates a fresh DB automatically on first run.
 
 **Socket not connecting?**
 → Check that server is running on port 4000. Check browser console for errors.

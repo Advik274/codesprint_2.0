@@ -142,6 +142,41 @@ You can resubmit as many times as you want. **Last submission before timer ends 
 
 ---
 
+## ⚔️ CODE ARENA 2026 MISSIONS
+### (These rounds run when the event is CODE ARENA — your coordinator will tell you which rounds are on)
+
+**Format:** 3 missions, 100 marks total. One laptop per team for Bug Hunt and Code Strike. Team discussion allowed. AI tools NOT allowed. No plagiarism.
+
+### MISSION 1 — INTELLIGENCE SCAN · 20 MCQs · 25 min · 20 marks
+- Topics: Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning
+- Every member answers on their own device; your team score is the **average** across members who submit — everyone participating beats one person carrying
+- Submit before the timer — unanswered = 0 for those questions
+
+### MISSION 2 — BUG HUNT · 5 buggy programs · 30 min · 30 marks
+- Five short programs in Java / C++ / Python — each has a planted syntax or logic bug
+- Read the code, find the bug, and **type the corrected line** in the box under each program
+- **One submission per team** — discuss first, lock in once. 6 marks per correct fix
+- Spacing and capitalisation don't matter; the fix itself does
+
+### MISSION 3 — CODE STRIKE · 3 problems · 45 min · 50 marks
+- Easy (10) / Medium (15) / Hard (25) revealed at once — solve in any language, any editor
+- **Paste your final code per problem** into the platform. Re-submitting is allowed until time runs out, but the latest paste resets your submission time
+- Scoring per problem: **70% correctness + 20% efficiency (judged) + 10% time bonus** (earlier = more)
+- Test against the sample inputs before pasting — judges run the samples first
+
+### 🔒 PROTECTED MODE
+When the organisers enable Protected Mode, your event tab locks down during the timed rounds (Intelligence Scan, Bug Hunt, tie-breaks):
+- **Copy, paste and right-click are disabled** on the event page
+- **Switching tabs or apps is detected and reported to the admin the moment it happens** — you'll see "🚨 Violation recorded" and so will they
+- Violations are counted per team; repeat offenders face penalties up to disqualification (organiser's decision is final)
+- Code Strike is the exception — you're expected to switch to your editor there
+
+### TIE BREAKER ⚡
+- If teams are tied, a rapid-fire question appears **only on the tied teams' screens**
+- One attempt per team — **fastest correct answer wins** the higher place
+
+---
+
 ## RESULTS REVEAL
 
 After judging, the results are revealed **dramatically** — one team at a time, from last place to first place. This happens live on the projector AND on your screen.

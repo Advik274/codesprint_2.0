@@ -5,6 +5,7 @@ import { Phase1Leaderboard } from '../components/phase1/index.jsx';
 import { getSocket } from '../hooks/useSocket';
 import { useSound } from '../hooks/useSound';
 import { useCountdown } from '../hooks/useTimer';
+import { applyCustomTheme, DEFAULT_THEME } from '../hooks/useThemeColors';
 
 const PROBLEMS = [
   'Build a real-time feedback portal where users submit ratings and see live averages.',
@@ -48,6 +49,7 @@ export default function AdminDashboard() {
 
   const [broadcastMsg, setBroadcastMsg] = useState('');
   const [broadcastType, setBroadcastType] = useState('info');
+  const [teamSearch, setTeamSearch] = useState('');
   const [battOverride, setBattOverride] = useState({});
   const [problemMsg, setProblemMsg] = useState('');
   const [submissionCount, setSubmissionCount] = useState(0);
@@ -111,6 +113,25 @@ export default function AdminDashboard() {
     getSocket().emit('admin:request_passcodes', { admin_token: sessionStorage.getItem('admin_session') || '' });
   }, [authed]);
 
+  // If the currently open tab belongs to a phase that just got disabled in
+  // Config, fall back to Setup instead of stranding the admin on a tab
+  // that no longer exists. (Must live before the early return — hooks rule.)
+  useEffect(() => {
+    if (!authed) return;
+    const enabled = state.app_state?.event_config?.phases_enabled || [];
+    const sd = enabled.includes('speed_demo') || state.app_state?.event_config?.speed_demo_enabled;
+    const visible = {
+      zones: enabled.includes('phase2'),
+      quiz: enabled.includes('quiz_round'),
+      bughunt: enabled.includes('bug_hunt'),
+      codestrike: enabled.includes('code_strike'),
+      questions: enabled.includes('phase1') || enabled.includes('quiz_round'),
+      phase3: enabled.includes('phase3'),
+      demo: sd,
+    };
+    if (visible[tab] === false) setTab('setup');
+  }, [authed, tab, state.app_state?.event_config]);
+
   // Alert chime whenever a new help request comes in — most important thing
   // an admin needs to notice while heads-down in another tab.
   const { play: playSound } = useSound();
@@ -171,33 +192,54 @@ export default function AdminDashboard() {
   const passcodeCache = state.passcodeCache || {};
 
   const activeTeams = state.teams.filter(t=>!t.is_eliminated);
-  const phases = ['setup','phase1','quiz_round','phase2','phase3','speed_demo','results'];
+  const phases = ['setup','phase1','quiz_round','bug_hunt','code_strike','phase2','phase3','speed_demo','results'];
 
   // V7: Dynamic phase naming — ordinal position within phases_enabled (excluding speed_demo)
   const enabledPhaseKeys = state.app_state?.event_config?.phases_enabled || ['phase1','quiz_round','phase2','phase3'];
+  // BUG FIX: a phase that isn't part of this event has no ordinal, and
+  // this used to fall through to `return phaseKey` — so if the admin was
+  // standing in a phase they'd since disabled in Config, the status bar
+  // and journey chips displayed the raw internal key ("phase1"). Every
+  // phase now has a human name to fall back on.
+  const PHASE_NAMES = {
+    setup: 'Setup', phase1: 'The Gauntlet', quiz_round: 'Quiz Round',
+    bug_hunt: 'Bug Hunt', code_strike: 'Code Strike',
+    phase2: 'Campus Conquest', phase3: 'Final Build',
+    speed_demo: 'Speed Demo', results: 'Results',
+  };
   function getPhaseLabel(phaseKey) {
-    const ordered = ['phase1','quiz_round','phase2','phase3'];
+    const ordered = ['phase1','quiz_round','bug_hunt','code_strike','phase2','phase3'];
+    // CODE ARENA missions keep their names visible next to the ordinal
+    const names = { bug_hunt: ' · Bug Hunt', code_strike: ' · Code Strike' };
     const active = ordered.filter(p => enabledPhaseKeys.includes(p));
     const idx = active.indexOf(phaseKey);
-    if (idx !== -1) return `Phase ${idx + 1}`;
-    if (phaseKey === 'setup') return 'Setup';
-    if (phaseKey === 'speed_demo') return 'Speed Demo';
-    if (phaseKey === 'results') return 'Results';
-    return phaseKey;
+    if (idx !== -1) return `Phase ${idx + 1}${names[phaseKey] || ''}`;
+    return PHASE_NAMES[phaseKey] || phaseKey;
   }
 
   const phaseLabels = {
     setup: 'Setup',
     phase1: getPhaseLabel('phase1'),
     quiz_round: getPhaseLabel('quiz_round'),
+    bug_hunt: getPhaseLabel('bug_hunt'),
+    code_strike: getPhaseLabel('code_strike'),
     phase2: getPhaseLabel('phase2'),
     phase3: getPhaseLabel('phase3'),
     speed_demo: 'Speed Demo',
     results: 'Results',
   };
-  const phaseColors = { setup:'var(--text3)', phase1:'var(--warning)', quiz_round:'var(--info)', phase2:'var(--accent)', phase3:'var(--info)', speed_demo:'var(--purple)', results:'var(--purple)' };
+  const phaseColors = { setup:'var(--text3)', phase1:'var(--warning)', quiz_round:'var(--info)', bug_hunt:'var(--danger)', code_strike:'var(--purple)', phase2:'var(--accent)', phase3:'var(--info)', speed_demo:'var(--purple)', results:'var(--purple)' };
   const enabledPhases = ['setup', ...enabledPhaseKeys, 'results'];
-  const currentIdx = phases.indexOf(phase);
+  // UX FIX: the Control tab's phase journey only shows the rounds THIS
+  // event actually runs (in canonical order) — not every phase that
+  // exists. If the admin is somehow standing in a disabled phase, it's
+  // kept visible so the journey never lies about where they are.
+  const journey = phases.filter(p =>
+    enabledPhases.includes(p)
+    || p === phase
+    || (p === 'speed_demo' && state.app_state?.event_config?.speed_demo_enabled)
+  );
+  const journeyIdx = journey.indexOf(phase);
   // nextPhase skips phases not in enabledPhases
   const nextPhase = (() => {
     let idx = phases.indexOf(phase) + 1;
@@ -221,23 +263,76 @@ export default function AdminDashboard() {
     }, 600);
   };
 
+  // UX FIX: tabs for phases that aren't part of this event are hidden —
+  // a CODE ARENA admin shouldn't be scanning past Zones / Phase 3 / Demo
+  // tabs that do nothing for their event. Enabling a phase in Config
+  // brings its tab back instantly.
+  const speedDemoOn = enabledPhaseKeys.includes('speed_demo') || state.app_state?.event_config?.speed_demo_enabled;
   const tabs = [
     { key:'config',    label:'⚙️ Config' },
+    { key:'theme',     label:'🎨 Theme' },
     { key:'setup',     label:'🏗️ Setup' },
     { key:'control',   label:'🎮 Control' },
     { key:'teams',     label:`👥 Teams (${state.teams.length})` },
-    { key:'zones',     label:'🗺️ Zones' },
-    { key:'quiz',      label:`🧠 Quiz${state.app_state?.quiz_round_active ? ' 🔴' : ''}` },
-    { key:'questions', label:`❓ Questions (${(state.app_state?.event_config?.custom_questions||[]).length})` },
-    { key:'phase3',    label:'🏗️ Phase 3' },
-    { key:'demo',      label:'🎤 Demo' },
+    { key:'zones',     label:'🗺️ Zones', show: enabledPhaseKeys.includes('phase2') },
+    { key:'quiz',      label:`🧠 Quiz${state.app_state?.quiz_round_active ? ' 🔴' : ''}`, show: enabledPhaseKeys.includes('quiz_round') },
+    { key:'bughunt',   label:`🐛 Bug Hunt${state.app_state?.bughunt_active ? ' 🔴' : ''}`, show: enabledPhaseKeys.includes('bug_hunt') },
+    { key:'codestrike',label:`⚔️ Code Strike${state.app_state?.codestrike_active ? ' 🔴' : ''}`, show: enabledPhaseKeys.includes('code_strike') },
+    { key:'tiebreak',  label:`⚡ Tie-Break${state.app_state?.tiebreak?.active ? ' 🔴' : ''}` },
+    { key:'questions', label:`❓ Questions (${(state.app_state?.event_config?.custom_questions||[]).length})`, show: enabledPhaseKeys.includes('phase1') || enabledPhaseKeys.includes('quiz_round') },
+    { key:'phase3',    label:'🏗️ Phase 3', show: enabledPhaseKeys.includes('phase3') },
+    { key:'demo',      label:'🎤 Demo', show: speedDemoOn },
     { key:'analytics', label:'📈 Analytics' },
     { key:'qr',        label:'📱 QR & Cards' },
     { key:'results',   label:'🏆 Results' },
     { key:'backup',    label:'💾 Backup' },
     { key:'danger',    label:'⚠️ Reset' },
     { key:'log',       label:'📋 Log' },
-  ];
+  ].filter(t => t.show !== false);
+
+  // UX FIX: advancing the phase while a round is still LIVE used to
+  // silently destroy its scores (e.g. leaving quiz_round mid-quiz means
+  // scores are never calculated). Warn with the consequence spelled out.
+  const liveBlocker =
+    state.app_state.quiz_round_active ? 'The QUIZ is still LIVE — End & Score it first or every team gets 0' :
+    state.app_state.bughunt_active ? 'BUG HUNT is still LIVE — End & Grade it first or the fixes are never marked' :
+    state.app_state.codestrike_active ? 'CODE STRIKE is still LIVE — End it first to lock submissions' :
+    state.app_state.tiebreak?.active ? 'A TIE-BREAK is still LIVE — wait for the winner or clear it' : null;
+
+  // UX FIX: one always-current "what do I do next" hint for the Control
+  // tab — the run-of-show without needing the manual open on a phone.
+  const nextStep = (() => {
+    const s = state.app_state;
+    if (phase === 'setup') {
+      if (state.teams.length === 0) return { msg: 'Start by registering teams — one by one or via Bulk CSV Import.', tab: 'setup', btn: 'Go to Setup' };
+      return { msg: `${state.teams.length} team${state.teams.length!==1?'s':''} registered. Print passcode cards, then advance when everyone is seated.`, tab: 'qr', btn: 'Passcode Cards' };
+    }
+    if (phase === 'quiz_round') {
+      if (s.quiz_round_active) return { msg: 'Quiz is LIVE — watch submissions, then End & Score before advancing.', tab: 'quiz', btn: 'Quiz Controls' };
+      const scored = state.teams.some(t => t.quiz_member_scores && Object.keys(t.quiz_member_scores).length > 0);
+      if (!scored) return { msg: 'Phase is set — now start the quiz itself from the Quiz tab.', tab: 'quiz', btn: 'Start Quiz' };
+      return { msg: 'Quiz scored ✔ Optionally eliminate bottom teams, then advance.', tab: 'quiz', btn: 'Quiz Scores' };
+    }
+    if (phase === 'bug_hunt') {
+      if (s.bughunt_active) return { msg: 'Bug Hunt is LIVE — End & Grade from its tab when time is up.', tab: 'bughunt', btn: 'Bug Hunt Controls' };
+      const graded = state.teams.some(t => t.bughunt_score !== null && t.bughunt_score !== undefined);
+      if (!graded) return { msg: 'Phase is set — start the Bug Hunt itself from its tab.', tab: 'bughunt', btn: 'Start Bug Hunt' };
+      return { msg: 'Bug Hunt graded ✔ Review fixes / override marks, then advance.', tab: 'bughunt', btn: 'Review Fixes' };
+    }
+    if (phase === 'code_strike') {
+      if (s.codestrike_active) return { msg: 'Code Strike is LIVE — End it from its tab when time is up.', tab: 'codestrike', btn: 'Code Strike Controls' };
+      if ((s.codestrike_problems || []).length === 0) return { msg: 'Phase is set — start Code Strike to reveal the 3 problems.', tab: 'codestrike', btn: 'Start Code Strike' };
+      return { msg: 'Submissions locked ✔ Judge each team, then advance to Results.', tab: 'codestrike', btn: 'Judge Panel' };
+    }
+    if (phase === 'phase1') return s.phase1_round_active
+      ? { msg: 'Round LIVE — End + Eliminate below when the timer runs out.' }
+      : { msg: 'Start the next round below, or advance when the Gauntlet is done.' };
+    if (phase === 'phase2') return { msg: 'Zone capture running — watch zones and batteries; advance when time is up.', tab: 'zones', btn: 'Zones' };
+    if (phase === 'phase3') return { msg: 'Assign / reveal problems and judge submissions in the Phase 3 tab.', tab: 'phase3', btn: 'Phase 3' };
+    if (phase === 'speed_demo') return { msg: 'Run each team\'s demo slot from the Demo tab; audience votes on Spectator.', tab: 'demo', btn: 'Demo' };
+    if (phase === 'results') return { msg: 'Reveal results below (worst → best). Totals tied? Fire a Tie-Break. Finish with the Thank You page.', tab: 'tiebreak', btn: 'Tie-Break' };
+    return null;
+  })();
 
   return (
     <div style={{ minHeight:'100vh', paddingBottom:40 }}>
@@ -246,15 +341,65 @@ export default function AdminDashboard() {
 
       <div style={{ maxWidth:960, margin:'0 auto', padding:'16px' }}>
 
-        {/* Status bar */}
+        {/* Status bar — 4th cell is contextual: live state of whatever
+            round the current phase runs (was hardcoded to phase1 "/5") */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:20 }}>
-          {[['Phase', phaseLabels[phase], phaseColors[phase]], ['Active', activeTeams.length, 'var(--accent)'], ['Zones', `${state.zones.filter(z=>z.owner_team_id).length}/${state.zones.length}`, 'var(--info)'], ['Round', phase==='phase1'?`${state.app_state.phase1_round}/5`:'—', 'var(--warning)']].map(([l,v,c])=>(
+          {[
+            ['Phase', phaseLabels[phase], phaseColors[phase]],
+            ['Active', activeTeams.length, 'var(--accent)'],
+            ['Zones', `${state.zones.filter(z=>z.owner_team_id).length}/${state.zones.length}`, 'var(--info)'],
+            (() => {
+              const s = state.app_state;
+              if (phase==='phase1') return ['Round', `${s.phase1_round}/${s.event_config?.phase1_rounds ?? 5}`, 'var(--warning)'];
+              if (phase==='quiz_round') return ['Quiz', s.quiz_round_active ? (s.quiz_paused ? '⏸ PAUSED' : '● LIVE') : 'idle', s.quiz_round_active ? (s.quiz_paused ? 'var(--warning)' : 'var(--danger)') : 'var(--text3)'];
+              if (phase==='bug_hunt') return ['Bug Hunt', s.bughunt_active ? (s.bughunt_paused ? '⏸ PAUSED' : '● LIVE') : 'idle', s.bughunt_active ? (s.bughunt_paused ? 'var(--warning)' : 'var(--danger)') : 'var(--text3)'];
+              if (phase==='code_strike') return ['Code Strike', s.codestrike_active ? (s.codestrike_paused ? '⏸ PAUSED' : '● LIVE') : 'idle', s.codestrike_active ? (s.codestrike_paused ? 'var(--warning)' : 'var(--danger)') : 'var(--text3)'];
+              if (phase==='results') return ['Revealed', `${(s.results_reveal_index ?? -1) + 1}`, 'var(--purple)'];
+              return ['Round', '—', 'var(--text3)'];
+            })(),
+          ].map(([l,v,c])=>(
             <div key={l} className="card" style={{ textAlign:'center', padding:12 }}>
               <div style={{ fontFamily:'var(--font-mono)', fontSize:20, fontWeight:700, color:c }}>{v}</div>
               <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>{l}</div>
             </div>
           ))}
         </div>
+
+        {/* ── ALWAYS-VISIBLE ALERTS — every tab, not just Control ──
+            UX FIX: help requests played a chime but were only rendered in
+            the Control tab; an admin heads-down judging Code Strike never
+            saw them. Same for the master-pause state. */}
+        {(state.help_requests||[]).length > 0 && (
+          <div style={{ border:'2px solid var(--warning)', borderRadius:8, padding:'14px 20px', background:'color-mix(in srgb, var(--warning) 8%, transparent)', marginBottom:16 }}>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:'var(--warning)', marginBottom:10 }}>
+              🆘 {state.help_requests.length} TEAM{state.help_requests.length!==1?'S':''} NEED HELP
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              {state.help_requests.map(h=>(
+                <div key={h.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
+                  <div style={{ width:8, height:8, borderRadius:'50%', background:h.team_color }}/>
+                  <div style={{ flex:1 }}>
+                    <span style={{ fontFamily:'var(--font-display)', fontSize:14 }}>{h.team_name}</span>
+                    <span style={{ marginLeft:8, fontSize:11, color:'var(--text3)' }}>{h.phase} · {new Date(h.created_at).toLocaleTimeString()}</span>
+                    {h.message && <div style={{ fontSize:12, color:'var(--text2)', marginTop:2 }}>{h.message}</div>}
+                  </div>
+                  <button className="btn-primary" onClick={()=>emit('admin:resolve_help',{help_id:h.id})} style={{ padding:'6px 14px', fontSize:12 }}>✓ Resolved</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {state.app_state.master_paused && (
+          <div style={{ border:'2px solid var(--warning)', borderRadius:8, padding:'14px 20px', background:'color-mix(in srgb, var(--warning) 8%, transparent)', display:'flex', gap:12, alignItems:'center', flexWrap:'wrap', marginBottom:16 }}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:'var(--font-display)', fontSize:16, color:'var(--warning)' }}>⏸ EVENT PAUSED</div>
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)', marginTop:2 }}>{state.app_state.master_pause_reason}</div>
+            </div>
+            <button className="btn-primary" onClick={()=>emit('admin:master_resume',{})} style={{ padding:'12px 28px', fontSize:16, animation:'pulse-accent 1s infinite' }}>
+              ▶️ RESUME EVENT
+            </button>
+          </div>
+        )}
 
         {/* Tabs */}
         <div style={{ display:'flex', gap:4, marginBottom:20, flexWrap:'wrap' }}>
@@ -269,8 +414,41 @@ export default function AdminDashboard() {
           <ConfigTab state={state} emit={emit} />
         )}
 
+        {/* ── THEME TAB ────────────────────────────────────────── */}
+        {tab==='theme'&&(
+          <ThemeTab state={state} emit={emit} />
+        )}
+
         {tab==='setup'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+            {/* ── 🔒 PROTECTED MODE toggle ─────────────────────── */}
+            {(()=>{
+              const pmOn = !!state.app_state?.event_config?.protected_mode;
+              return (
+                <div className="card card-lg" style={{ border:`1px solid ${pmOn?'var(--danger)':'var(--border)'}`, background:pmOn?'color-mix(in srgb, var(--danger) 4%, transparent)':undefined }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
+                    <div style={{ flex:1, minWidth:260 }}>
+                      <h2 style={{ fontFamily:'var(--font-display)', fontSize:18, color:pmOn?'var(--danger)':'var(--text2)', marginBottom:6 }}>
+                        {pmOn?'🔒':'🔓'} PROTECTED MODE {pmOn?'— ACTIVE':''}
+                      </h2>
+                      <div style={{ fontSize:13, color:'var(--text2)', lineHeight:1.6 }}>
+                        During timed rounds (quiz, Bug Hunt, tie-breaks) every team browser blocks copy/paste and right-click, and <strong>every tab or app switch is recorded and reported here instantly</strong> with a per-team violation counter. Code Strike is exempt — teams must switch to their editor there.
+                      </div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginTop:6 }}>
+                        ⚠️ A browser can't see a second phone under the desk — keep volunteers walking the room. This catches and logs what happens on the event device.
+                      </div>
+                    </div>
+                    <button
+                      onClick={()=>{ if(pmOn || confirm('Enable Protected Mode? All teams get a lockdown banner; tab switches and copy/paste during timed rounds will be recorded as violations.')) emit('admin:set_protected_mode',{enabled:!pmOn}); }}
+                      className={pmOn?'btn-danger':'btn-primary'}
+                      style={{ padding:'14px 26px', fontSize:15, flexShrink:0 }}>
+                      {pmOn?'🔓 Disable':'🔒 Enable Protected Mode'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="card card-lg">
               <h2 style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom:16, color:'var(--warning)' }}>TEAM REGISTRATION</h2>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
@@ -292,7 +470,7 @@ export default function AdminDashboard() {
                 <input value={teamMembers} onChange={e=>setTeamMembers(e.target.value)} placeholder="Alice, Bob, Charlie"/>
               </div>
               <button className="btn-primary" onClick={registerTeam} disabled={!teamName.trim()} style={{ width:'100%' }}>Register + Auto-Generate Passcode</button>
-              {regMsg&&<div style={{ marginTop:10, padding:'10px 14px', background:'rgba(0,255,136,0.1)', border:'1px solid rgba(0,255,136,0.3)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{regMsg}</div>}
+              {regMsg&&<div style={{ marginTop:10, padding:'10px 14px', background:'color-mix(in srgb, var(--accent) 10%, transparent)', border:'1px solid color-mix(in srgb, var(--accent) 30%, transparent)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{regMsg}</div>}
             </div>
 
             {/* ── BULK CSV IMPORT ─────────────────────────────── */}
@@ -352,6 +530,8 @@ export default function AdminDashboard() {
               </div>
             )}
 
+            {/* Zones only matter for Campus Conquest — hidden otherwise */}
+            {enabledPhaseKeys.includes('phase2') && (<>
             <div className="card card-lg">
               <h2 style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom:16, color:'var(--info)' }}>ZONE SETUP</h2>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
@@ -383,6 +563,7 @@ export default function AdminDashboard() {
                 ))}
               </div>
             )}
+            </>)}
           </div>
         )}
 
@@ -390,61 +571,46 @@ export default function AdminDashboard() {
         {tab==='control'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
 
-            {/* ── HELP REQUESTS — always visible at top ── */}
-            {(state.help_requests||[]).length > 0 && (
-              <div style={{ border:'2px solid var(--warning)', borderRadius:8, padding:'14px 20px', background:'rgba(255,170,0,0.08)' }}>
-                <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:'var(--warning)', marginBottom:10 }}>
-                  🆘 {state.help_requests.length} TEAM{state.help_requests.length!==1?'S':''} NEED HELP
-                </div>
-                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                  {state.help_requests.map(h=>(
-                    <div key={h.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'8px 12px', background:'var(--bg3)', borderRadius:6 }}>
-                      <div style={{ width:8, height:8, borderRadius:'50%', background:h.team_color }}/>
-                      <div style={{ flex:1 }}>
-                        <span style={{ fontFamily:'var(--font-display)', fontSize:14 }}>{h.team_name}</span>
-                        <span style={{ marginLeft:8, fontSize:11, color:'var(--text3)' }}>{h.phase} · {new Date(h.created_at).toLocaleTimeString()}</span>
-                        {h.message && <div style={{ fontSize:12, color:'var(--text2)', marginTop:2 }}>{h.message}</div>}
-                      </div>
-                      <button className="btn-primary" onClick={()=>emit('admin:resolve_help',{help_id:h.id})} style={{ padding:'6px 14px', fontSize:12 }}>✓ Resolved</button>
-                    </div>
-                  ))}
-                </div>
+            {/* ── NEXT STEP — state-aware run-of-show guidance ── */}
+            {nextStep && (
+              <div style={{ border:'1px solid var(--accent)', borderRadius:8, padding:'12px 18px', background:'color-mix(in srgb, var(--accent) 6%, transparent)', display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--accent)', letterSpacing:'0.15em', flexShrink:0 }}>NEXT STEP</div>
+                <div style={{ flex:1, fontSize:13, color:'var(--text)', minWidth:220 }}>{nextStep.msg}</div>
+                {nextStep.tab && (
+                  <button className="btn-ghost" onClick={()=>setTab(nextStep.tab)} style={{ fontSize:12, padding:'6px 14px', color:'var(--accent)', borderColor:'var(--accent)' }}>
+                    {nextStep.btn} →
+                  </button>
+                )}
               </div>
             )}
 
-            {/* ── EMERGENCY PAUSE — always visible at top ── */}
-            {state.app_state.master_paused ? (
-              <div style={{ border:'2px solid var(--warning)', borderRadius:8, padding:'14px 20px', background:'rgba(255,170,0,0.08)', display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontFamily:'var(--font-display)', fontSize:16, color:'var(--warning)' }}>⏸ EVENT PAUSED</div>
-                  <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)', marginTop:2 }}>{state.app_state.master_pause_reason}</div>
-                </div>
-                <button className="btn-primary" onClick={()=>emit('admin:master_resume',{})} style={{ padding:'12px 28px', fontSize:16, animation:'pulse-accent 1s infinite' }}>
-                  ▶️ RESUME EVENT
-                </button>
-              </div>
-            ) : (
+            {!state.app_state.master_paused && (
               <button className="btn-warning" onClick={()=>{ const r=prompt('Pause reason (shown to all teams):','Technical issue'); if(r!==null) emit('admin:master_pause',{reason:r}); }} style={{ width:'100%', padding:14, fontSize:15 }}>
                 ⏸ EMERGENCY PAUSE — freeze everything
               </button>
             )}
             <div className="card card-lg">
               <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap' }}>
-                {phases.map((p,i)=>(
-                  <div key={p} style={{ padding:'4px 14px', borderRadius:4, background:p===phase?`${phaseColors[p]}22`:i<currentIdx?'rgba(0,255,136,0.06)':'var(--bg3)', border:`1px solid ${p===phase?phaseColors[p]:i<currentIdx?'rgba(0,255,136,0.3)':'var(--border)'}`, color:p===phase?phaseColors[p]:i<currentIdx?'var(--accent)':'var(--text3)', fontFamily:'var(--font-mono)', fontSize:11 }}>
-                    {i<currentIdx?'✓ ':p===phase?'● ':'○ '}{phaseLabels[p]}
+                {journey.map((p,i)=>(
+                  <div key={p} style={{ padding:'4px 14px', borderRadius:4, background:p===phase?`${phaseColors[p]}22`:i<journeyIdx?'color-mix(in srgb, var(--accent) 6%, transparent)':'var(--bg3)', border:`1px solid ${p===phase?phaseColors[p]:i<journeyIdx?'color-mix(in srgb, var(--accent) 30%, transparent)':'var(--border)'}`, color:p===phase?phaseColors[p]:i<journeyIdx?'var(--accent)':'var(--text3)', fontFamily:'var(--font-mono)', fontSize:11 }}>
+                    {i<journeyIdx?'✓ ':p===phase?'● ':'○ '}{phaseLabels[p]}
                   </div>
                 ))}
               </div>
               <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:20 }}>
-                {nextPhase&&<button className="btn-primary" onClick={()=>{ if(confirm(`Advance to ${phaseLabels[nextPhase]}?`)) emit('admin:start_phase',{phase:nextPhase}); }} style={{ fontSize:15, padding:'12px 28px' }}>▶ Advance to {phaseLabels[nextPhase]}</button>}
+                {nextPhase&&<button className="btn-primary" onClick={()=>{
+                  const msg = liveBlocker
+                    ? `⚠️ ${liveBlocker}.\n\nAdvance to ${phaseLabels[nextPhase]} anyway?`
+                    : `Advance to ${phaseLabels[nextPhase]}?`;
+                  if(confirm(msg)) emit('admin:start_phase',{phase:nextPhase});
+                }} style={{ fontSize:15, padding:'12px 28px', ...(liveBlocker?{filter:'saturate(0.6)'}:{}) }}>▶ Advance to {phaseLabels[nextPhase]}{liveBlocker?' ⚠️':''}</button>}
                 {(state.phase_history_count > 0) && (
                   <button className="btn-ghost" onClick={()=>{ if(confirm('Roll back to previous phase? Team scores/zones will be restored to before that transition.')) emit('admin:rollback_phase',{}); }} style={{ fontSize:13, padding:'10px 18px', color:'var(--warning)', borderColor:'var(--warning)' }}>
                     ⏪ Roll Back Phase
                   </button>
                 )}
                 {phase==='phase1'&&<>
-                  <button className="btn-warning" onClick={()=>emit('admin:next_round',{})} disabled={state.app_state.phase1_round_active||state.app_state.phase1_round>=5}>⚡ Start Round {state.app_state.phase1_round+1}</button>
+                  <button className="btn-warning" onClick={()=>emit('admin:next_round',{})} disabled={state.app_state.phase1_round_active||state.app_state.phase1_round>=(state.app_state.event_config?.phase1_rounds??5)}>⚡ Start Round {state.app_state.phase1_round+1} / {state.app_state.event_config?.phase1_rounds??5}</button>
                   <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
                     <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', padding:'4px 10px', background:'var(--bg3)', borderRadius:4, border:'1px solid var(--border)' }}>
                       👥 {activeTeams.length} active
@@ -467,7 +633,7 @@ export default function AdminDashboard() {
                     </button>
                   )}
                   {state.app_state.phase2_paused && (
-                    <div style={{ padding:'8px 14px', background:'rgba(255,170,0,0.15)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)', display:'flex', alignItems:'center' }}>
+                    <div style={{ padding:'8px 14px', background:'color-mix(in srgb, var(--warning) 15%, transparent)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)', display:'flex', alignItems:'center' }}>
                       ⏸️ PAUSED — battery drain stopped
                     </div>
                   )}
@@ -493,7 +659,7 @@ export default function AdminDashboard() {
                     </button>
                   )}
                   {state.app_state.phase3_paused && (
-                    <div style={{ padding:'8px 14px', background:'rgba(255,170,0,0.15)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)' }}>
+                    <div style={{ padding:'8px 14px', background:'color-mix(in srgb, var(--warning) 15%, transparent)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)' }}>
                       ⏸️ TIMER PAUSED
                     </div>
                   )}
@@ -501,11 +667,21 @@ export default function AdminDashboard() {
                   <button className="btn-ghost" onClick={()=>emit('admin:adjust_timer',{phase:'phase3',delta_min:-15})} style={{ fontSize:12 }}>−15 min</button>
                 </div>
               )}
+                {phase==='bug_hunt'&&(
+                  <div style={{ padding:'10px 14px', background:'color-mix(in srgb, var(--danger) 8%, transparent)', border:'1px solid color-mix(in srgb, var(--danger) 30%, transparent)', borderRadius:6, marginTop:10, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--danger)' }}>
+                    🐛 Bug Hunt phase — start, pause, grade and override marks in the <strong>Bug Hunt</strong> tab.
+                  </div>
+                )}
+                {phase==='code_strike'&&(
+                  <div style={{ padding:'10px 14px', background:'color-mix(in srgb, var(--purple) 8%, transparent)', border:'1px solid color-mix(in srgb, var(--purple) 30%, transparent)', borderRadius:6, marginTop:10, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--purple)' }}>
+                    ⚔️ Code Strike phase — start, view code and judge in the <strong>Code Strike</strong> tab.
+                  </div>
+                )}
                 {phase==='phase1' && (
                   <Phase1RoundStatus state={state} />
                 )}
                 {state.app_state.current_question && (
-                  <div style={{ padding:'12px 16px', background:'rgba(255,170,0,0.1)', border:'1px solid rgba(255,170,0,0.3)', borderRadius:6, marginTop:10 }}>
+                  <div style={{ padding:'12px 16px', background:'color-mix(in srgb, var(--warning) 10%, transparent)', border:'1px solid color-mix(in srgb, var(--warning) 30%, transparent)', borderRadius:6, marginTop:10 }}>
                     <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--warning)', marginBottom:4 }}>ACTIVE QUESTION — Round {state.app_state.phase1_round}</div>
                     <div style={{ fontSize:14, marginBottom:4 }}>{state.app_state.current_question.question}</div>
                     <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--accent)' }}>Answer: {state.app_state.current_question.answer}</div>
@@ -547,7 +723,26 @@ export default function AdminDashboard() {
         {/* ── TEAMS ─────────────────────────────────────────────── */}
         {tab==='teams'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {state.teams.map(team=>(
+            {/* UX FIX: 40+ teams meant scrolling forever to find one —
+                filter by name or passcode, with live counts. */}
+            <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+              <input
+                value={teamSearch}
+                onChange={e=>setTeamSearch(e.target.value)}
+                placeholder="🔍 Search team name or passcode..."
+                style={{ flex:1, minWidth:220, fontFamily:'var(--font-mono)', fontSize:13 }}
+              />
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', flexShrink:0 }}>
+                {activeTeams.length} active · {state.teams.length - activeTeams.length} out
+              </div>
+            </div>
+            {state.teams
+              .filter(t => {
+                const q = teamSearch.trim().toLowerCase();
+                if (!q) return true;
+                return t.name.toLowerCase().includes(q) || (passcodeCache[t.id] || '').includes(q);
+              })
+              .map(team=>(
               <div key={team.id} className="card" style={{ border:`1px solid ${team.color}33`, opacity:team.is_eliminated?0.55:1 }}>
                 <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
                   <div style={{ width:10, height:10, borderRadius:'50%', background:team.color }}/>
@@ -561,6 +756,14 @@ export default function AdminDashboard() {
                       <input type="number" min="0" max="100" value={battOverride[team.id]??''} onChange={e=>setBattOverride(b=>({...b,[team.id]:e.target.value}))} placeholder="bat%" style={{ width:60, padding:'4px 6px', fontSize:12 }}/>
                       <button className="btn-ghost" onClick={()=>emit('admin:override_battery',{team_id:team.id,battery:battOverride[team.id]})} style={{ padding:'4px 8px', fontSize:11 }}>Set</button>
                     </>}
+                    {(team.violations?.total||0) > 0 && (
+                      <button
+                        title={`Tab switches: ${team.violations.tab_switch||0} · Copy/paste: ${team.violations.copy_paste||0} · Last: ${team.violations.last_at?new Date(team.violations.last_at).toLocaleTimeString():'—'}\nClick to clear.`}
+                        onClick={()=>{ if(confirm(`Clear ${team.name}'s ${team.violations.total} violation(s)?`)) emit('admin:clear_violations',{team_id:team.id}); }}
+                        style={{ padding:'4px 10px', fontSize:11, background:'color-mix(in srgb, var(--danger) 12%, transparent)', border:'1px solid var(--danger)', borderRadius:4, color:'var(--danger)', cursor:'pointer', fontFamily:'var(--font-mono)' }}>
+                        🚨 {team.violations.total}
+                      </button>
+                    )}
                     {team.is_eliminated
                       ?<button className="btn-ghost" onClick={()=>emit('admin:restore_team',{team_id:team.id})} style={{ fontSize:11, padding:'4px 10px', color:'var(--accent)' }}>Restore</button>
                       :<button className="btn-danger" onClick={()=>{ if(confirm(`Eliminate ${team.name}?`)) emit('admin:eliminate_team',{team_id:team.id}); }} style={{ padding:'4px 10px', fontSize:11 }}>Eliminate</button>
@@ -576,7 +779,7 @@ export default function AdminDashboard() {
         {/* ── ZONES ─────────────────────────────────────────────── */}
         {tab==='zones'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            <div style={{ padding:'10px 14px', background:'rgba(0,170,255,0.08)', border:'1px solid rgba(0,170,255,0.2)', borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+            <div style={{ padding:'10px 14px', background:'color-mix(in srgb, var(--info) 8%, transparent)', border:'1px solid color-mix(in srgb, var(--info) 20%, transparent)', borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
               <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--info)' }}>Zone laptop URL format: <strong>http://[YOUR_IP]:5173/zone/[ZONE_ID]</strong></div>
               <button className="btn-ghost" onClick={()=>getSocket().emit('admin:request_zone_intel',{admin_token:sessionStorage.getItem('admin_session')||''})} style={{ fontSize:11, padding:'4px 10px' }}>🔄 Refresh Answers</button>
             </div>
@@ -662,7 +865,7 @@ export default function AdminDashboard() {
                   </div>
                 )}
                 {qActive && qPaused && (
-                  <div style={{ textAlign:'center', padding:'10px', marginBottom:16, background:'rgba(255,170,0,0.1)', border:'1px solid var(--warning)', borderRadius:8, fontFamily:'var(--font-mono)', color:'var(--warning)' }}>
+                  <div style={{ textAlign:'center', padding:'10px', marginBottom:16, background:'color-mix(in srgb, var(--warning) 10%, transparent)', border:'1px solid var(--warning)', borderRadius:8, fontFamily:'var(--font-mono)', color:'var(--warning)' }}>
                     ⏸ PAUSED — {Math.round((qs.quiz_paused_remaining_ms||0)/60000)} min remaining
                   </div>
                 )}
@@ -671,7 +874,7 @@ export default function AdminDashboard() {
                 <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
                   {!qActive && (
                     <button className="btn-info" style={{ flex:1, padding:14, fontSize:15 }}
-                      onClick={()=>{ if(phase!=='quiz_round'){alert('Switch to quiz_round phase first in Control tab.');return;} emit('admin:start_quiz_round',{}); }}>
+                      onClick={()=>{ if(phase!=='quiz_round'){alert(`The event is currently in "${phaseLabels[phase]}". Advance to the quiz phase first (Control tab → Advance).`);return;} emit('admin:start_quiz_round',{}); }}>
                       ▶ Start Quiz Round ({state.app_state?.event_config?.quiz_num_questions||50} Qs)
                     </button>
                   )}
@@ -689,7 +892,7 @@ export default function AdminDashboard() {
                   )}
                   {qActive && (
                     <button style={{ flex:1, padding:12, background:'var(--bg3)', border:'1px solid var(--danger)', borderRadius:6, color:'var(--danger)', fontFamily:'var(--font-mono)', cursor:'pointer' }}
-                      onClick={()=>{ if(confirm('End quiz round and calculate scores?')) emit('admin:end_quiz_round',{}); }}>
+                      onClick={()=>{ if(confirm(`End the quiz and calculate scores?\n\n${totalSubmissions} member submission(s) received so far — anyone who hasn't submitted scores 0.`)) emit('admin:end_quiz_round',{}); }}>
                       ⏹ End & Score
                     </button>
                   )}
@@ -791,6 +994,21 @@ export default function AdminDashboard() {
           );
         })()}
 
+        {/* ── CODE ARENA: BUG HUNT TAB ──────────────────────────── */}
+        {tab==='bughunt'&&(
+          <BugHuntTab state={state} emit={emit} phase={phase} />
+        )}
+
+        {/* ── CODE ARENA: CODE STRIKE TAB ───────────────────────── */}
+        {tab==='codestrike'&&(
+          <CodeStrikeTab state={state} emit={emit} phase={phase} />
+        )}
+
+        {/* ── CODE ARENA: TIE-BREAK TAB ─────────────────────────── */}
+        {tab==='tiebreak'&&(
+          <TieBreakTab state={state} emit={emit} />
+        )}
+
         {/* ── CUSTOM QUESTIONS TAB ──────────────────────────────── */}
         {tab==='questions'&&(()=>{
           const customQs = state.app_state?.event_config?.custom_questions || [];
@@ -859,7 +1077,7 @@ export default function AdminDashboard() {
                   </label>
                   <input type="text" value={cqAnswer} onChange={e=>setCqAnswer(e.target.value)} placeholder="Exact answer string" style={{ fontFamily:'var(--font-mono)' }}/>
                 </div>
-                {cqMsg && <div style={{ padding:'8px 14px', background: cqMsg.startsWith('✅')?'rgba(0,255,136,0.1)':'rgba(255,68,68,0.1)', border:`1px solid ${cqMsg.startsWith('✅')?'var(--accent)':'var(--danger)'}`, borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, marginBottom:10 }}>{cqMsg}</div>}
+                {cqMsg && <div style={{ padding:'8px 14px', background: cqMsg.startsWith('✅')?'color-mix(in srgb, var(--accent) 10%, transparent)':'color-mix(in srgb, var(--danger) 10%, transparent)', border:`1px solid ${cqMsg.startsWith('✅')?'var(--accent)':'var(--danger)'}`, borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, marginBottom:10 }}>{cqMsg}</div>}
                 <button className="btn-warning" style={{ width:'100%', padding:12, fontSize:14 }} onClick={submitQ}>
                   ➕ Add Question
                 </button>
@@ -881,9 +1099,9 @@ export default function AdminDashboard() {
                         <div key={q.id} style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'12px 14px', background:'var(--bg3)', borderRadius:6, border:'1px solid var(--border)' }}>
                           <div style={{ flex:1, minWidth:0 }}>
                             <div style={{ display:'flex', gap:8, marginBottom:4, flexWrap:'wrap' }}>
-                              <span style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--warning)', padding:'2px 6px', background:'rgba(255,170,0,0.1)', borderRadius:3 }}>{q.type}</span>
+                              <span style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--warning)', padding:'2px 6px', background:'color-mix(in srgb, var(--warning) 10%, transparent)', borderRadius:3 }}>{q.type}</span>
                               <span style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', padding:'2px 6px', background:'var(--bg)', borderRadius:3 }}>{q.difficulty}</span>
-                              <span style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--accent)', padding:'2px 6px', background:'rgba(0,255,136,0.08)', borderRadius:3 }}>{q.points}pts</span>
+                              <span style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--accent)', padding:'2px 6px', background:'color-mix(in srgb, var(--accent) 8%, transparent)', borderRadius:3 }}>{q.points}pts</span>
                             </div>
                             <div style={{ fontSize:13, lineHeight:1.5, color:'var(--text)', marginBottom:4 }}>{q.question}</div>
                             <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--accent)' }}>✓ {q.answer}</div>
@@ -924,7 +1142,7 @@ export default function AdminDashboard() {
                 {[['individual','Individual / All'],['group','By Group']].map(([m,lbl])=>(
                   <button key={m} onClick={()=>setProblemMode(m)} style={{
                     flex:1, padding:'9px 0', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, cursor:'pointer',
-                    background: problemMode===m ? 'rgba(0,170,255,0.12)' : 'var(--bg3)',
+                    background: problemMode===m ? 'color-mix(in srgb, var(--info) 12%, transparent)' : 'var(--bg3)',
                     border: `1px solid ${problemMode===m ? 'var(--info)' : 'var(--border)'}`,
                     color: problemMode===m ? 'var(--info)' : 'var(--text3)',
                   }}>{lbl}</button>
@@ -942,7 +1160,7 @@ export default function AdminDashboard() {
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
                     {PROBLEMS.map((p,i)=>(
-                      <button key={i} onClick={()=>{ setSelectedProblem(p); setCustomProblem(''); }} style={{ textAlign:'left', padding:'10px 14px', background:selectedProblem===p&&!customProblem?'rgba(0,170,255,0.1)':'var(--bg3)', border:`1px solid ${selectedProblem===p&&!customProblem?'var(--info)':'var(--border)'}`, borderRadius:6, color:'var(--text)', textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)', fontSize:13, lineHeight:1.5 }}>{p}</button>
+                      <button key={i} onClick={()=>{ setSelectedProblem(p); setCustomProblem(''); }} style={{ textAlign:'left', padding:'10px 14px', background:selectedProblem===p&&!customProblem?'color-mix(in srgb, var(--info) 10%, transparent)':'var(--bg3)', border:`1px solid ${selectedProblem===p&&!customProblem?'var(--info)':'var(--border)'}`, borderRadius:6, color:'var(--text)', textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)', fontSize:13, lineHeight:1.5 }}>{p}</button>
                     ))}
                   </div>
                   <div style={{ marginBottom:14 }}>
@@ -958,7 +1176,7 @@ export default function AdminDashboard() {
                   }} style={{ width:'100%', padding:14, fontSize:15 }}>
                     🚀 Reveal Problem to {problemTarget==='all'?'All Teams':state.teams.find(t=>t.id===problemTarget)?.name}
                   </button>
-                  {problemMsg&&<div style={{ marginTop:10, padding:'10px 14px', background:'rgba(0,255,136,0.1)', border:'1px solid rgba(0,255,136,0.3)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{problemMsg}</div>}
+                  {problemMsg&&<div style={{ marginTop:10, padding:'10px 14px', background:'color-mix(in srgb, var(--accent) 10%, transparent)', border:'1px solid color-mix(in srgb, var(--accent) 30%, transparent)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{problemMsg}</div>}
                 </>
               ) : (
                 /* Group assignment mode */
@@ -994,7 +1212,7 @@ export default function AdminDashboard() {
                   {/* Problem picker */}
                   <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
                     {PROBLEMS.map((p,i)=>(
-                      <button key={i} onClick={()=>{ setSelectedProblem(p); setCustomProblem(''); }} style={{ textAlign:'left', padding:'10px 14px', background:selectedProblem===p&&!customProblem?'rgba(0,170,255,0.1)':'var(--bg3)', border:`1px solid ${selectedProblem===p&&!customProblem?'var(--info)':'var(--border)'}`, borderRadius:6, color:'var(--text)', textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)', fontSize:13, lineHeight:1.5 }}>{p}</button>
+                      <button key={i} onClick={()=>{ setSelectedProblem(p); setCustomProblem(''); }} style={{ textAlign:'left', padding:'10px 14px', background:selectedProblem===p&&!customProblem?'color-mix(in srgb, var(--info) 10%, transparent)':'var(--bg3)', border:`1px solid ${selectedProblem===p&&!customProblem?'var(--info)':'var(--border)'}`, borderRadius:6, color:'var(--text)', textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)', fontSize:13, lineHeight:1.5 }}>{p}</button>
                     ))}
                   </div>
                   <div style={{ marginBottom:14 }}>
@@ -1011,7 +1229,7 @@ export default function AdminDashboard() {
                     }}>
                     🚀 Reveal to {groupLabel} ({groupTeamIds.length} teams)
                   </button>
-                  {groupMsg && <div style={{ marginTop:10, padding:'10px 14px', background:'rgba(0,255,136,0.1)', border:'1px solid rgba(0,255,136,0.3)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{groupMsg}</div>}
+                  {groupMsg && <div style={{ marginTop:10, padding:'10px 14px', background:'color-mix(in srgb, var(--accent) 10%, transparent)', border:'1px solid color-mix(in srgb, var(--accent) 30%, transparent)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{groupMsg}</div>}
                 </>
               )}
             </div>
@@ -1083,7 +1301,17 @@ export default function AdminDashboard() {
                 let board;
                 let scoreOf;
                 let scoreUnit;
-                if (phasesEnabled.includes('phase3')) {
+                if (phasesEnabled.includes('bug_hunt') || phasesEnabled.includes('code_strike')) {
+                  // CODE ARENA: combined mission marks (mirrors server getResultsBoard)
+                  const totalOf = t =>
+                    (phasesEnabled.includes('quiz_round') ? (t.quiz_marks_scored||0) : 0)
+                    + (phasesEnabled.includes('bug_hunt') ? (t.bughunt_score||0) : 0)
+                    + (phasesEnabled.includes('code_strike') ? (t.codestrike_score||0) : 0);
+                  board = [...state.teams].filter(t=>!t.is_eliminated)
+                    .sort((a,b)=> totalOf(b)-totalOf(a) || (b.tiebreak_wins||0)-(a.tiebreak_wins||0));
+                  scoreOf = t => `${Math.round(totalOf(t)*10)/10} marks${(t.tiebreak_wins||0)>0?' ⚡':''}`;
+                  scoreUnit = 'Total';
+                } else if (phasesEnabled.includes('phase3')) {
                   board = [...state.teams].filter(t=>t.phase3_judge_scores).sort((a,b)=>b.phase3_judge_scores.total-a.phase3_judge_scores.total);
                   scoreOf = t => `${t.phase3_judge_scores.total}/100`;
                   scoreUnit = 'Judge';
@@ -1723,7 +1951,7 @@ function Phase1RoundStatus({ state }) {
   // of resuming the paused one.
   if (phase1_paused_mid_round) {
     return (
-      <div style={{ marginTop:10, padding:'8px 14px', background:'rgba(255,170,0,0.1)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)' }}>
+      <div style={{ marginTop:10, padding:'8px 14px', background:'color-mix(in srgb, var(--warning) 10%, transparent)', border:'1px solid var(--warning)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)' }}>
         ⏸ Round {phase1_round} paused — timer frozen, resumes where it left off.
       </div>
     );
@@ -1740,7 +1968,7 @@ function Phase1RoundStatus({ state }) {
   return (
     <div style={{
       marginTop:10, padding:'10px 16px', borderRadius:6, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
-      background: timesUp ? 'rgba(255,51,85,0.12)' : 'rgba(0,255,136,0.08)',
+      background: timesUp ? 'color-mix(in srgb, var(--danger) 12%, transparent)' : 'color-mix(in srgb, var(--accent) 8%, transparent)',
       border: `1px solid ${timesUp ? 'var(--danger)' : 'var(--accent)'}`,
     }}>
       <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color: timesUp ? 'var(--danger)' : 'var(--accent)', fontWeight:700 }}>
@@ -1792,6 +2020,14 @@ function ConfigTab({ state, emit }) {
     speed_demo_duration_sec: String(cfg.speed_demo_duration_sec ?? 90),
     audience_weight_percent: String(cfg.audience_weight_percent ?? 10),
     reveal_top_n: String(cfg.reveal_top_n ?? 0),
+    // CODE ARENA missions
+    quiz_question_source: cfg.quiz_question_source || 'dsa',
+    quiz_marks: String(cfg.quiz_marks ?? 20),
+    bughunt_duration_min: String(cfg.bughunt_duration_min ?? 30),
+    bughunt_marks: String(cfg.bughunt_marks ?? 30),
+    bughunt_num_programs: String(cfg.bughunt_num_programs ?? 5),
+    codestrike_duration_min: String(cfg.codestrike_duration_min ?? 45),
+    codestrike_marks: String(cfg.codestrike_marks ?? 50),
   });
 
   const togglePhase = (p) => {
@@ -1816,6 +2052,12 @@ function ConfigTab({ state, emit }) {
       speed_demo_duration_sec: parseInt(form.speed_demo_duration_sec) || 90,
       audience_weight_percent: parseInt(form.audience_weight_percent) || 10,
       reveal_top_n: parseInt(form.reveal_top_n) || 0,
+      quiz_marks: parseInt(form.quiz_marks) || 20,
+      bughunt_duration_min: parseInt(form.bughunt_duration_min) || 30,
+      bughunt_marks: parseInt(form.bughunt_marks) || 30,
+      bughunt_num_programs: parseInt(form.bughunt_num_programs) || 5,
+      codestrike_duration_min: parseInt(form.codestrike_duration_min) || 45,
+      codestrike_marks: parseInt(form.codestrike_marks) || 50,
     }});
   };
 
@@ -1831,10 +2073,10 @@ function ConfigTab({ state, emit }) {
         <div style={{ marginBottom:16 }}>
           <label style={{ display:'block', fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:8, textTransform:'uppercase' }}>Phases to Run</label>
           <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-            {[['phase1','Phase 1 — Gauntlet'],['quiz_round','Phase 1.5 — Timed Quiz'],['phase2','Phase 2 — Conquest'],['phase3','Phase 3 — Build'],['speed_demo','Speed Demo — Audience Vote']].map(([key,label])=>(
+            {[['phase1','Phase 1 — Gauntlet'],['quiz_round','Timed Quiz / Intelligence Scan'],['bug_hunt','Bug Hunt — Fix Broken Code'],['code_strike','Code Strike — 3 Problems'],['phase2','Campus Conquest — Zones'],['phase3','Final Build'],['speed_demo','Speed Demo — Audience Vote']].map(([key,label])=>(
               <button key={key} onClick={()=>togglePhase(key)} style={{
                 padding:'8px 16px', borderRadius:6, fontSize:13,
-                background: form.phases_enabled.includes(key) ? 'rgba(0,255,136,0.12)' : 'var(--bg3)',
+                background: form.phases_enabled.includes(key) ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'var(--bg3)',
                 border: `1px solid ${form.phases_enabled.includes(key) ? 'var(--accent)' : 'var(--border)'}`,
                 color: form.phases_enabled.includes(key) ? 'var(--accent)' : 'var(--text3)',
                 textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)',
@@ -1845,20 +2087,63 @@ function ConfigTab({ state, emit }) {
           </div>
         </div>
 
+        {/* UX FIX: only the settings for phases actually ticked above are
+            shown — toggling a phase reveals/hides its section instantly,
+            so the form always matches the event being configured. */}
+        {(form.phases_enabled.includes('phase1') || form.phases_enabled.includes('phase2') || form.phases_enabled.includes('phase3')) && (
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:16 }}>
-          <ConfigField form={form} setForm={setForm} label="Phase 1 Rounds" field="phase1_rounds" min={1} max={10} />
-          <ConfigField form={form} setForm={setForm} label="Phase 2 Duration" field="phase2_duration_min" min={15} max={240} unit="min" />
-          <ConfigField form={form} setForm={setForm} label="Phase 3 Duration" field="phase3_duration_min" min={30} max={360} unit="min" />
+          {form.phases_enabled.includes('phase1') && <ConfigField form={form} setForm={setForm} label="Phase 1 Rounds" field="phase1_rounds" min={1} max={10} />}
+          {form.phases_enabled.includes('phase2') && <ConfigField form={form} setForm={setForm} label="Phase 2 Duration" field="phase2_duration_min" min={15} max={240} unit="min" />}
+          {form.phases_enabled.includes('phase3') && <ConfigField form={form} setForm={setForm} label="Phase 3 Duration" field="phase3_duration_min" min={30} max={360} unit="min" />}
         </div>
+        )}
 
+        {form.phases_enabled.includes('quiz_round') && (
         <div style={{ marginBottom:16 }}>
-          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Quiz Round Settings (Phase 1.5)</div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Quiz Round Settings</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
             <ConfigField form={form} setForm={setForm} label="Number of Questions" field="quiz_num_questions" min={5} max={100} />
             <ConfigField form={form} setForm={setForm} label="Quiz Duration" field="quiz_duration_min" min={5} max={120} unit="min" />
           </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <div>
+              <label style={{ display:'block', fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:4, textTransform:'uppercase' }}>Question Bank</label>
+              <select value={form.quiz_question_source} onChange={e=>setForm(f=>({...f, quiz_question_source:e.target.value}))}>
+                <option value="dsa">DSA pool (original 50)</option>
+                <option value="arena">Multi-topic pool (Java/C/C++/Python/DBMS/OS/Git/Web/Aptitude)</option>
+                <option value="both">Both pools combined</option>
+              </select>
+            </div>
+            <ConfigField form={form} setForm={setForm} label="Quiz Marks (combined board)" field="quiz_marks" min={1} max={100} />
+          </div>
         </div>
+        )}
 
+        {form.phases_enabled.includes('bug_hunt') && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Bug Hunt Settings</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
+            <ConfigField form={form} setForm={setForm} label="Programs Per Team" field="bughunt_num_programs" min={1} max={8} />
+            <ConfigField form={form} setForm={setForm} label="Duration" field="bughunt_duration_min" min={5} max={120} unit="min" />
+            <ConfigField form={form} setForm={setForm} label="Total Marks" field="bughunt_marks" min={1} max={100} />
+          </div>
+        </div>
+        )}
+
+        {form.phases_enabled.includes('code_strike') && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Code Strike Settings</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <ConfigField form={form} setForm={setForm} label="Duration" field="codestrike_duration_min" min={10} max={180} unit="min" />
+            <ConfigField form={form} setForm={setForm} label="Total Marks" field="codestrike_marks" min={1} max={100} />
+          </div>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:6 }}>
+            3 problems (Easy 10 / Medium 15 / Hard 25) scaled to Total Marks. Score = 70% correctness + 20% efficiency + 10% submission-time bonus.
+          </div>
+        </div>
+        )}
+
+        {form.phases_enabled.includes('phase2') && (
         <div style={{ marginBottom:16 }}>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Battery Settings</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
@@ -1867,13 +2152,14 @@ function ConfigTab({ state, emit }) {
             <ConfigField form={form} setForm={setForm} label="Capture Gain" field="battery_capture_gain" min={0} max={50} unit="%" />
           </div>
         </div>
+        )}
 
         <div style={{ marginBottom:16 }}>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Speed Demo Phase (Sprint 3)</div>
           <div style={{ marginBottom:10 }}>
             <button onClick={()=>setForm(f=>({...f,speed_demo_enabled:!f.speed_demo_enabled}))} style={{
               padding:'8px 16px', borderRadius:6, fontSize:13,
-              background:form.speed_demo_enabled?'rgba(168,85,247,0.12)':'var(--bg3)',
+              background:form.speed_demo_enabled?'color-mix(in srgb, var(--purple) 12%, transparent)':'var(--bg3)',
               border:`1px solid ${form.speed_demo_enabled?'var(--purple)':'var(--border)'}`,
               color:form.speed_demo_enabled?'var(--purple)':'var(--text3)',
               textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)',
@@ -1937,6 +2223,14 @@ function ConfigTab({ state, emit }) {
                 battery_drain_rate:'2', battery_attempt_cost:'5', battery_capture_gain:'20',
                 speed_demo_enabled:true, speed_demo_duration_sec:'90', audience_weight_percent:'10',
               }},
+              { label:'⚔️ CODE ARENA 2026', desc:'Reboot Club: Scan → Bug Hunt → Code Strike', preset:{
+                event_name:'CODE ARENA 2026',
+                phases_enabled:['quiz_round','bug_hunt','code_strike'],
+                quiz_num_questions:'20', quiz_duration_min:'25', quiz_question_source:'arena', quiz_marks:'20',
+                bughunt_num_programs:'5', bughunt_duration_min:'30', bughunt_marks:'30',
+                codestrike_duration_min:'45', codestrike_marks:'50',
+                speed_demo_enabled:false,
+              }},
             ].map(({ label, desc, preset }) => (
               <button key={label} onClick={() => setForm(f => ({ ...f, ...preset }))}
                 style={{ padding:'8px 14px', borderRadius:6, fontFamily:'var(--font-body)', fontSize:13,
@@ -1964,18 +2258,24 @@ function ConfigTab({ state, emit }) {
       <div className="card" style={{ background:'var(--bg3)' }}>
         <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', textTransform:'uppercase', marginBottom:10 }}>Current Saved Config</div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-          {[
+          {/* Only rows for what this event actually runs */}
+          {(() => { const en = cfg.phases_enabled || []; return [
             ['Event', cfg.event_name || '—'],
             ['College', cfg.college_name || '—'],
-            ['Phases', (cfg.phases_enabled||[]).join(' → ')],
-            ['P1 Rounds', cfg.phase1_rounds],
-            ['P2 Duration', `${cfg.phase2_duration_min} min`],
-            ['P3 Duration', `${cfg.phase3_duration_min} min`],
-            ['Battery Drain', `${cfg.battery_drain_rate}%/min`],
-            ['Attempt Cost', `${cfg.battery_attempt_cost}%`],
-            ['Capture Gain', `+${cfg.battery_capture_gain}%`],
-            ['Speed Demo', cfg.speed_demo_enabled ? `✓ ${cfg.speed_demo_duration_sec}s / ${cfg.audience_weight_percent}% weight` : '—'],
-          ].map(([l,v])=>(
+            ['Phases', en.join(' → ') || '—'],
+            ...(en.includes('phase1') ? [['P1 Rounds', cfg.phase1_rounds]] : []),
+            ...(en.includes('phase2') ? [
+              ['P2 Duration', `${cfg.phase2_duration_min} min`],
+              ['Battery Drain', `${cfg.battery_drain_rate}%/min`],
+              ['Attempt Cost', `${cfg.battery_attempt_cost}%`],
+              ['Capture Gain', `+${cfg.battery_capture_gain}%`],
+            ] : []),
+            ...(en.includes('phase3') ? [['P3 Duration', `${cfg.phase3_duration_min} min`]] : []),
+            ...(cfg.speed_demo_enabled || en.includes('speed_demo') ? [['Speed Demo', `✓ ${cfg.speed_demo_duration_sec}s / ${cfg.audience_weight_percent}% weight`]] : []),
+            ...(en.includes('quiz_round') ? [['Quiz', `${cfg.quiz_num_questions}Q · ${cfg.quiz_duration_min} min · ${cfg.quiz_question_source || 'dsa'} bank · ${cfg.quiz_marks ?? 20} marks`]] : []),
+            ...(en.includes('bug_hunt') ? [['Bug Hunt', `${cfg.bughunt_num_programs ?? 5} programs · ${cfg.bughunt_duration_min ?? 30} min · ${cfg.bughunt_marks ?? 30} marks`]] : []),
+            ...(en.includes('code_strike') ? [['Code Strike', `${cfg.codestrike_duration_min ?? 45} min · ${cfg.codestrike_marks ?? 50} marks`]] : []),
+          ]; })().map(([l,v])=>(
             <div key={l} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:'0.5px solid var(--border)', fontSize:12 }}>
               <span style={{ color:'var(--text3)' }}>{l}</span>
               <span style={{ fontFamily:'var(--font-mono)', color:'var(--accent)' }}>{v}</span>
@@ -2094,6 +2394,682 @@ function SnapshotsAndArchives() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── 🎨 Theme tab — full-spectrum color pickers, live preview ──────
+// Every color in the app derives from 6 CSS variables, so this edits
+// those. Picks preview instantly on THIS screen; "Apply to All Screens"
+// broadcasts via event_config so teams + spectator re-theme live.
+const THEME_PRESETS = [
+  { label:'🏛 Colosseum', desc:'Molten gold on torchlit ink (default)', theme: { ...DEFAULT_THEME } },
+  { label:'🖥 Neon Terminal', desc:'The original green-on-black hacker look', theme: { accent:'#00ff88', danger:'#ff3355', warning:'#ffaa00', info:'#00aaff', purple:'#aa55ff', bg:'#0a0a0f' } },
+  { label:'👑 Royal', desc:'Indigo, lavender & midnight', theme: { accent:'#8b7cf8', danger:'#ff5470', warning:'#ffb454', info:'#64b5f6', purple:'#c792ea', bg:'#110f1d' } },
+  { label:'🔥 Inferno', desc:'Fire orange on scorched black', theme: { accent:'#ff6b35', danger:'#ff2e2e', warning:'#ffc53d', info:'#90a4b8', purple:'#d96aa0', bg:'#160c08' } },
+  { label:'🌊 Abyss', desc:'Teal & deep-sea blue', theme: { accent:'#35d0ba', danger:'#ff5c5c', warning:'#ffb020', info:'#58a6ff', purple:'#9d8cff', bg:'#0a1016' } },
+  { label:'🌸 Sakura', desc:'Pink & plum on charcoal', theme: { accent:'#ff8fab', danger:'#ff4d6d', warning:'#ffb347', info:'#7fb8d8', purple:'#c77dff', bg:'#151015' } },
+];
+
+const THEME_TOKENS = [
+  ['accent', 'Primary / Success', 'Buttons, scores, captures, correct answers — the brand color'],
+  ['bg', 'Background', 'Dark-mode backdrop — cards and borders are derived from it'],
+  ['danger', 'Danger', 'Eliminations, wrong answers, violations, Bug Hunt'],
+  ['warning', 'Warning', 'Timers, pauses, help requests'],
+  ['info', 'Info', 'Quiz round, neutral highlights'],
+  ['purple', 'Flair', 'Results, Code Strike, spectator drama'],
+];
+
+function ThemeTab({ state, emit }) {
+  const saved = state.app_state?.event_config?.theme || null;
+  const [draft, setDraft] = useState({ ...DEFAULT_THEME, ...(saved || {}) });
+
+  // BUG FIX: the unmount cleanup used to close over `saved` from the
+  // render that created the effect. Because the effect only re-runs when
+  // `draft` changes, clicking "Apply to All Screens" (which changes
+  // `saved`, not `draft`) left the cleanup holding the PREVIOUS theme —
+  // so leaving the Theme tab silently reverted the whole panel, and
+  // AppContext never re-applied because its value hadn't changed since.
+  // Net effect: the theme appeared to work only on the Theme page.
+  // A ref keeps the cleanup pointed at whatever is actually saved now.
+  const savedRef = useRef(saved);
+  useEffect(() => { savedRef.current = saved; }, [saved]);
+
+  // Live preview on this screen only; on leaving the tab, snap back to
+  // the theme that's actually saved (AppContext owns it from there).
+  useEffect(() => {
+    applyCustomTheme(draft);
+    return () => applyCustomTheme(savedRef.current);
+  }, [draft]);
+
+  const setColor = (key, value) => setDraft(d => ({ ...d, [key]: value }));
+  // Key-order-independent comparison (JSON.stringify was fragile)
+  const isDefault = Object.keys(DEFAULT_THEME).every(k => (draft[k] || '').toLowerCase() === DEFAULT_THEME[k]);
+  // Does what I'm previewing match what every other screen is showing?
+  // (saved === null means everyone is on the stock palette)
+  const savedEffective = saved || DEFAULT_THEME;
+  const isLive = Object.keys(DEFAULT_THEME).every(k =>
+    (draft[k] || '').toLowerCase() === (savedEffective[k] || '').toLowerCase());
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      <div className="card card-lg" style={{ border:'1px solid var(--accent)' }}>
+        <h2 style={{ fontFamily:'var(--font-display)', fontSize:18, marginBottom:6, color:'var(--accent)' }}>🎨 EVENT THEME</h2>
+        <div style={{ fontSize:13, color:'var(--text2)', marginBottom:16, lineHeight:1.6 }}>
+          Every color in the app derives from these six. Changes preview <strong>live on this screen</strong> as you pick;
+          hit <strong>Apply to All Screens</strong> to push the theme to every team phone, zone laptop and the spectator projector instantly.
+          Button text and light-mode contrast adjust themselves automatically.
+        </div>
+
+        {/* Pickers */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:12, marginBottom:18 }}>
+          {THEME_TOKENS.map(([key, label, desc]) => (
+            <div key={key} style={{ display:'flex', gap:12, alignItems:'center', padding:'10px 12px', background:'var(--bg3)', borderRadius:8, border:'1px solid var(--border)' }}>
+              <input
+                type="color"
+                value={draft[key] || '#000000'}
+                onChange={e=>setColor(key, e.target.value)}
+                style={{ width:52, height:44, padding:2, borderRadius:8, border:'1px solid var(--border2)', background:'var(--bg2)', cursor:'pointer', flexShrink:0 }}
+                title={`Pick ${label} — full spectrum + eyedropper`}
+              />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text)', textTransform:'uppercase', letterSpacing:'0.08em' }}>{label}</div>
+                <div style={{ fontSize:11, color:'var(--text3)', lineHeight:1.4, marginTop:2 }}>{desc}</div>
+              </div>
+              <input
+                type="text"
+                value={draft[key] || ''}
+                onChange={e=>{ const v = e.target.value; setDraft(d => ({ ...d, [key]: v })); }}
+                onBlur={e=>{ if(!/^#[0-9a-f]{6}$/i.test(e.target.value)) setColor(key, DEFAULT_THEME[key]); }}
+                maxLength={7}
+                style={{ width:84, fontFamily:'var(--font-mono)', fontSize:12, textAlign:'center', flexShrink:0 }}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Live sample strip — real classes, so it always matches reality */}
+        <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Live Preview</div>
+        <div className="card" style={{ marginBottom:18 }}>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:12 }}>
+            <button className="btn-primary" style={{ padding:'8px 16px', fontSize:12 }}>Primary</button>
+            <button className="btn-danger" style={{ padding:'8px 16px', fontSize:12 }}>Eliminate</button>
+            <button className="btn-warning" style={{ padding:'8px 16px', fontSize:12 }}>Pause</button>
+            <button className="btn-info" style={{ padding:'8px 16px', fontSize:12 }}>Info</button>
+            <button className="btn-ghost" style={{ padding:'8px 16px', fontSize:12 }}>Ghost</button>
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+            <span className="badge badge-success">Captured</span>
+            <span className="badge badge-danger">Out</span>
+            <span className="badge badge-warning">Busy</span>
+            <span className="badge badge-info">Neutral</span>
+            <span className="badge badge-purple">Reveal</span>
+            <span style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--accent)', marginLeft:8 }}>SCORE 120</span>
+            <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text2)' }}>· body text</span>
+            <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>· muted</span>
+          </div>
+        </div>
+
+        {/* Presets */}
+        <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Presets — click to load into the pickers</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:18 }}>
+          {THEME_PRESETS.map(p => (
+            <button key={p.label} onClick={()=>setDraft({ ...p.theme })}
+              style={{ padding:'8px 14px', borderRadius:6, fontFamily:'var(--font-body)', fontSize:13,
+                background:'var(--bg3)', border:'1px solid var(--border)', color:'var(--text)',
+                cursor:'pointer', textAlign:'left', textTransform:'none', letterSpacing:'normal',
+                display:'flex', alignItems:'center', gap:10 }}>
+              <span style={{ display:'flex', gap:3 }}>
+                {['accent','danger','info','purple'].map(k => (
+                  <span key={k} style={{ width:12, height:12, borderRadius:'50%', background:p.theme[k], border:'1px solid rgba(0,0,0,0.3)' }}/>
+                ))}
+              </span>
+              <span>
+                <div>{p.label}</div>
+                <div style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>{p.desc}</div>
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Status — is what I'm looking at actually live for everyone?
+            UX FIX: previously Apply sat behind a confirm() and gave no
+            feedback at all, so a dismissed dialog (or never pressing it)
+            looked identical to a successful apply — the preview made the
+            admin's own screen look themed either way. */}
+        <div style={{
+          display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
+          padding:'10px 14px', borderRadius:8, marginBottom:12,
+          border:`1px solid ${isLive ? 'var(--accent)' : 'var(--warning)'}`,
+          background: isLive ? 'color-mix(in srgb, var(--accent) 8%, transparent)' : 'color-mix(in srgb, var(--warning) 8%, transparent)',
+        }}>
+          <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color: isLive ? 'var(--accent)' : 'var(--warning)' }}>
+            {isLive ? '● LIVE ON ALL SCREENS' : '○ PREVIEW ONLY — not applied yet'}
+          </span>
+          <span style={{ fontSize:12, color:'var(--text3)', flex:1, minWidth:180 }}>
+            {isLive
+              ? 'Teams, zone laptops and the projector are using these colors.'
+              : 'You are the only one seeing these colors. Click Apply to push them everywhere.'}
+          </span>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          <button className="btn-primary" style={{ flex:1, padding:14, fontSize:15, minWidth:220 }}
+            disabled={isLive}
+            onClick={()=>emit('admin:set_theme',{ theme: isDefault ? null : draft })}>
+            {isLive ? '✓ Applied to All Screens' : '🎨 Apply to All Screens'}
+          </button>
+          <button className="btn-ghost" style={{ padding:14, fontSize:13 }}
+            onClick={()=>{ setDraft({ ...DEFAULT_THEME }); emit('admin:set_theme',{ theme:null }); }}>
+            ↩ Reset to Default
+          </button>
+        </div>
+        <div style={{ marginTop:10, fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', lineHeight:1.6 }}>
+          The theme survives restarts and config saves. Light mode auto-darkens your picks so they stay readable on the pale background.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CODE ARENA: Bug Hunt tab — control + review + overrides ───────
+function BugHuntTab({ state, emit, phase }) {
+  const s = state.app_state;
+  const cfg = s.event_config || {};
+  const active = s.bughunt_active;
+  const paused = s.bughunt_paused;
+  const programs = s.bughunt_programs || [];
+  const submittedTeams = state.teams.filter(t => !t.is_eliminated && t.bughunt_submitted_at);
+  const graded = state.teams.some(t => t.bughunt_score !== null && t.bughunt_score !== undefined);
+
+  // Review data — pull-only, includes expected answers (admin eyes only)
+  const [review, setReview] = useState(null);
+  const [overrideDraft, setOverrideDraft] = useState({}); // `${team_id}_${prog_id}` -> marks
+  const loadReview = () => {
+    const socket = getSocket();
+    socket.emit('admin:request_bughunt_review', { admin_token: sessionStorage.getItem('admin_session') || '' });
+  };
+  useEffect(() => {
+    const socket = getSocket();
+    const onReview = (d) => setReview(d);
+    socket.on('admin:bughunt_review', onReview);
+    loadReview();
+    return () => socket.off('admin:bughunt_review', onReview);
+  }, []);
+  // Refresh review after any override ack
+  useEffect(() => {
+    const socket = getSocket();
+    const onSaved = () => loadReview();
+    socket.on('admin:bughunt_override_saved', onSaved);
+    return () => socket.off('admin:bughunt_override_saved', onSaved);
+  }, []);
+
+  const perProgramMarks = Math.round(((cfg.bughunt_marks ?? 30) / ((programs.length || cfg.bughunt_num_programs || 5))) * 10) / 10;
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      {/* Status + controls */}
+      <div className="card card-lg" style={{ border:`1px solid ${active ? 'var(--danger)' : 'var(--border)'}` }}>
+        <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--danger)', marginBottom:16 }}>🐛 BUG HUNT CONTROL</h3>
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:20 }}>
+          {[
+            ['Status', active ? (paused ? 'PAUSED' : 'LIVE') : 'IDLE', active ? (paused ? 'var(--warning)' : 'var(--accent)') : 'var(--text3)'],
+            ['Programs', programs.length || (cfg.bughunt_num_programs ?? 5), 'var(--danger)'],
+            ['Submitted', `${submittedTeams.length}/${state.teams.filter(t=>!t.is_eliminated).length}`, 'var(--accent)'],
+            ['Config', `${cfg.bughunt_num_programs ?? 5}P / ${cfg.bughunt_duration_min ?? 30}min / ${cfg.bughunt_marks ?? 30}m`, 'var(--text2)'],
+          ].map(([l,v,c])=>(
+            <div key={l} style={{ background:'var(--bg3)', borderRadius:8, padding:'12px 14px' }}>
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginBottom:4, textTransform:'uppercase' }}>{l}</div>
+              <div style={{ fontFamily:'var(--font-display)', fontSize:20, color:c }}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        {active && s.bughunt_timer_end && !paused && (
+          <div style={{ textAlign:'center', padding:'12px 0', marginBottom:16 }}>
+            <CountdownTimer endTime={s.bughunt_timer_end} label="Bug Hunt Timer" />
+          </div>
+        )}
+        {active && paused && (
+          <div style={{ textAlign:'center', padding:'10px', marginBottom:16, background:'color-mix(in srgb, var(--warning) 10%, transparent)', border:'1px solid var(--warning)', borderRadius:8, fontFamily:'var(--font-mono)', color:'var(--warning)' }}>
+            ⏸ PAUSED — {Math.round((s.bughunt_paused_remaining_ms||0)/60000)} min remaining
+          </div>
+        )}
+
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          {!active && (
+            <button className="btn-danger" style={{ flex:1, padding:14, fontSize:15 }}
+              onClick={()=>{ if(phase!=='bug_hunt'){alert('Advance to the Bug Hunt phase first (Control tab).');return;} if(confirm(`Start Bug Hunt? ${cfg.bughunt_num_programs ?? 5} programs, ${cfg.bughunt_duration_min ?? 30} min. Any previous Bug Hunt scores are cleared.`)) emit('admin:start_bughunt',{}); }}>
+              ▶ Start Bug Hunt ({cfg.bughunt_num_programs ?? 5} programs)
+            </button>
+          )}
+          {active && !paused && (
+            <button style={{ flex:1, padding:12, background:'var(--bg3)', border:'1px solid var(--warning)', borderRadius:6, color:'var(--warning)', fontFamily:'var(--font-mono)', cursor:'pointer' }}
+              onClick={()=>emit('admin:pause_bughunt',{})}>⏸ Pause</button>
+          )}
+          {active && paused && (
+            <button className="btn-primary" style={{ flex:1, padding:12 }}
+              onClick={()=>emit('admin:resume_bughunt',{})}>▶ Resume</button>
+          )}
+          {active && (
+            <button style={{ flex:1, padding:12, background:'var(--bg3)', border:'1px solid var(--danger)', borderRadius:6, color:'var(--danger)', fontFamily:'var(--font-mono)', cursor:'pointer' }}
+              onClick={()=>{ if(confirm(`End Bug Hunt and auto-grade all fixes?\n\n${submittedTeams.length}/${state.teams.filter(t=>!t.is_eliminated).length} teams have submitted — teams that haven't score 0 (override later if needed).`)) emit('admin:end_bughunt',{}); }}>
+              ⏹ End & Grade
+            </button>
+          )}
+        </div>
+
+        {active && (
+          <div style={{ marginTop:14 }}>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginBottom:8, textTransform:'uppercase' }}>Adjust Timer</div>
+            <div style={{ display:'flex', gap:8 }}>
+              {[-10,-5,+5,+10].map(d=>(
+                <button key={d} onClick={()=>emit('admin:adjust_bughunt_timer',{delta_min:d})} style={{
+                  flex:1, padding:'8px 0', background:'var(--bg3)', border:'1px solid var(--border)',
+                  borderRadius:6, color: d<0?'var(--danger)':'var(--accent)',
+                  fontFamily:'var(--font-mono)', fontSize:13, cursor:'pointer',
+                }}>{d>0?'+':''}{d}m</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Submission tracker */}
+      <div className="card">
+        <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, marginBottom:12 }}>SUBMISSION TRACKER</h3>
+        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+          {state.teams.filter(t=>!t.is_eliminated).map(team=>(
+            <div key={team.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'var(--bg3)', borderRadius:6, border:`1px solid ${team.bughunt_submitted_at?team.color+'44':'var(--border)'}` }}>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div style={{ width:10, height:10, borderRadius:'50%', background:team.color }}/>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:13 }}>{team.name}</div>
+              </div>
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color: team.bughunt_submitted_at ? 'var(--accent)' : 'var(--text3)' }}>
+                {team.bughunt_submitted_at
+                  ? `✓ submitted ${new Date(team.bughunt_submitted_at).toLocaleTimeString()}${graded ? ` · ${team.bughunt_score ?? 0} marks` : ''}`
+                  : '○ waiting...'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Review + override panel */}
+      <div className="card">
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontSize:16 }}>REVIEW FIXES {graded ? '· GRADED' : '(answers visible only to you)'}</h3>
+          <button className="btn-ghost" onClick={loadReview} style={{ fontSize:11, padding:'4px 10px' }}>🔄 Refresh</button>
+        </div>
+        {!review || review.programs.length===0 ? (
+          <div style={{ textAlign:'center', padding:24, color:'var(--text3)', fontFamily:'var(--font-mono)', fontSize:13 }}>
+            Nothing to review yet — start the Bug Hunt first.
+          </div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            {review.teams.filter(t=>t.submission).map(t=>(
+              <div key={t.team_id} style={{ border:`1px solid ${t.color}44`, borderRadius:8, padding:'12px 14px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+                  <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:t.color }}>{t.team_name}</div>
+                  <div style={{ fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{t.score !== null && t.score !== undefined ? `${t.score} marks` : 'not graded yet'}</div>
+                </div>
+                {review.programs.map(p=>{
+                  const theirAnswer = t.submission?.answers?.[p.id];
+                  const auto = t.results?.auto?.[p.id];
+                  const marks = t.results?.per_program?.[p.id];
+                  const overridden = t.results?.overrides?.[p.id] !== undefined;
+                  const draftKey = `${t.team_id}_${p.id}`;
+                  return (
+                    <div key={p.id} style={{ padding:'8px 0', borderTop:'1px solid var(--border)' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+                        <div style={{ flex:1, minWidth:220 }}>
+                          <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginBottom:2 }}>{p.title}</div>
+                          <div style={{ fontFamily:'var(--font-mono)', fontSize:13 }}>
+                            {theirAnswer ? <span style={{ color:'var(--text)' }}>"{theirAnswer}"</span> : <span style={{ color:'var(--text3)' }}>— no fix submitted</span>}
+                          </div>
+                          <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--accent)', marginTop:2 }}>
+                            expected: {(p.answers || [p.answer]).filter(Boolean).join('  |  ')}
+                          </div>
+                        </div>
+                        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                          {t.results && (
+                            <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color: auto ? 'var(--accent)' : 'var(--danger)' }}>
+                              {auto ? '✅ auto-correct' : '❌ auto-wrong'} · {marks ?? 0}m{overridden ? ' (override)' : ''}
+                            </span>
+                          )}
+                          {t.results && (
+                            <>
+                              <input type="number" min={0} max={perProgramMarks} step={0.5} placeholder={`0–${perProgramMarks}`}
+                                value={overrideDraft[draftKey] ?? ''}
+                                onChange={e=>setOverrideDraft(o=>({ ...o, [draftKey]: e.target.value }))}
+                                style={{ width:74, padding:'4px 6px', fontSize:12, fontFamily:'var(--font-mono)' }}/>
+                              <button className="btn-ghost" style={{ fontSize:11, padding:'4px 10px' }}
+                                onClick={()=>{ emit('admin:bughunt_override',{ team_id:t.team_id, program_id:p.id, marks:overrideDraft[draftKey] }); }}>
+                                Set
+                              </button>
+                              {overridden && (
+                                <button className="btn-ghost" style={{ fontSize:11, padding:'4px 8px', color:'var(--warning)' }}
+                                  onClick={()=>emit('admin:bughunt_override',{ team_id:t.team_id, program_id:p.id, marks:null })}>
+                                  ↩ auto
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {review.teams.filter(t=>t.submission).length===0 && (
+              <div style={{ textAlign:'center', padding:16, color:'var(--text3)', fontFamily:'var(--font-mono)', fontSize:13 }}>No team submissions yet.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── CODE ARENA: Code Strike tab — control + judge panel ───────────
+function CodeStrikeTab({ state, emit, phase }) {
+  const s = state.app_state;
+  const cfg = s.event_config || {};
+  const active = s.codestrike_active;
+  const paused = s.codestrike_paused;
+  const problems = s.codestrike_problems || [];
+  const totalSubs = state.teams.reduce((n,t)=>n+Object.keys(t.codestrike_submitted||{}).length, 0);
+
+  const [data, setData] = useState(null); // pull: full code + judge state
+  const [judgeDraft, setJudgeDraft] = useState({}); // `${team}_${prob}` -> {correctness, efficiency}
+  const [openCode, setOpenCode] = useState(null); // `${team}_${prob}` expanded
+  const loadSubs = () => {
+    getSocket().emit('admin:request_codestrike_submissions', { admin_token: sessionStorage.getItem('admin_session') || '' });
+  };
+  useEffect(() => {
+    const socket = getSocket();
+    const onData = (d) => setData(d);
+    const onJudged = () => loadSubs();
+    socket.on('admin:codestrike_submissions', onData);
+    socket.on('admin:codestrike_judged', onJudged);
+    loadSubs();
+    return () => { socket.off('admin:codestrike_submissions', onData); socket.off('admin:codestrike_judged', onJudged); };
+  }, []);
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      {/* Status + controls */}
+      <div className="card card-lg" style={{ border:`1px solid ${active ? 'var(--purple)' : 'var(--border)'}` }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--purple)' }}>⚔️ CODE STRIKE CONTROL</h3>
+          <button onClick={()=>{
+            fetch('/api/admin/codestrike-export', { headers:{ 'x-admin-token': sessionStorage.getItem('admin_session')||'' }})
+              .then(r=>r.blob()).then(blob=>{
+                const url=URL.createObjectURL(blob);
+                const a=document.createElement('a'); a.href=url; a.download='codestrike_submissions.csv'; a.click();
+              });
+          }} style={{ padding:'8px 14px', background:'var(--bg3)', border:'1px solid var(--accent)', borderRadius:6, color:'var(--accent)', fontFamily:'var(--font-mono)', fontSize:12, cursor:'pointer', textTransform:'uppercase' }}>
+            ⬇ Export CSV
+          </button>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:20 }}>
+          {[
+            ['Status', active ? (paused ? 'PAUSED' : 'LIVE') : 'IDLE', active ? (paused ? 'var(--warning)' : 'var(--accent)') : 'var(--text3)'],
+            ['Problems', problems.length || 3, 'var(--purple)'],
+            ['Submissions', totalSubs, 'var(--accent)'],
+            ['Config', `${cfg.codestrike_duration_min ?? 45}min / ${cfg.codestrike_marks ?? 50}m`, 'var(--text2)'],
+          ].map(([l,v,c])=>(
+            <div key={l} style={{ background:'var(--bg3)', borderRadius:8, padding:'12px 14px' }}>
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginBottom:4, textTransform:'uppercase' }}>{l}</div>
+              <div style={{ fontFamily:'var(--font-display)', fontSize:20, color:c }}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        {active && s.codestrike_timer_end && !paused && (
+          <div style={{ textAlign:'center', padding:'12px 0', marginBottom:16 }}>
+            <CountdownTimer endTime={s.codestrike_timer_end} label="Code Strike Timer" />
+          </div>
+        )}
+        {active && paused && (
+          <div style={{ textAlign:'center', padding:'10px', marginBottom:16, background:'color-mix(in srgb, var(--warning) 10%, transparent)', border:'1px solid var(--warning)', borderRadius:8, fontFamily:'var(--font-mono)', color:'var(--warning)' }}>
+            ⏸ PAUSED — {Math.round((s.codestrike_paused_remaining_ms||0)/60000)} min remaining
+          </div>
+        )}
+
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          {!active && (
+            <button style={{ flex:1, padding:14, fontSize:15, background:'color-mix(in srgb, var(--purple) 15%, transparent)', border:'1px solid var(--purple)', borderRadius:6, color:'var(--purple)', fontFamily:'var(--font-mono)', cursor:'pointer' }}
+              onClick={()=>{ if(phase!=='code_strike'){alert('Advance to the Code Strike phase first (Control tab).');return;} if(confirm(`Start Code Strike? 3 problems revealed, ${cfg.codestrike_duration_min ?? 45} min timer. Any previous Code Strike data is cleared.`)) emit('admin:start_codestrike',{}); }}>
+              ▶ Start Code Strike (reveal problems)
+            </button>
+          )}
+          {active && !paused && (
+            <button style={{ flex:1, padding:12, background:'var(--bg3)', border:'1px solid var(--warning)', borderRadius:6, color:'var(--warning)', fontFamily:'var(--font-mono)', cursor:'pointer' }}
+              onClick={()=>emit('admin:pause_codestrike',{})}>⏸ Pause</button>
+          )}
+          {active && paused && (
+            <button className="btn-primary" style={{ flex:1, padding:12 }}
+              onClick={()=>emit('admin:resume_codestrike',{})}>▶ Resume</button>
+          )}
+          {active && (
+            <button style={{ flex:1, padding:12, background:'var(--bg3)', border:'1px solid var(--danger)', borderRadius:6, color:'var(--danger)', fontFamily:'var(--font-mono)', cursor:'pointer' }}
+              onClick={()=>{ if(confirm('End Code Strike? Submissions lock immediately; judging can continue after.')) emit('admin:end_codestrike',{}); }}>
+              ⏹ End (lock submissions)
+            </button>
+          )}
+        </div>
+
+        {active && (
+          <div style={{ marginTop:14 }}>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginBottom:8, textTransform:'uppercase' }}>Adjust Timer</div>
+            <div style={{ display:'flex', gap:8 }}>
+              {[-10,-5,+5,+10].map(d=>(
+                <button key={d} onClick={()=>emit('admin:adjust_codestrike_timer',{delta_min:d})} style={{
+                  flex:1, padding:'8px 0', background:'var(--bg3)', border:'1px solid var(--border)',
+                  borderRadius:6, color: d<0?'var(--danger)':'var(--accent)',
+                  fontFamily:'var(--font-mono)', fontSize:13, cursor:'pointer',
+                }}>{d>0?'+':''}{d}m</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Judge panel */}
+      <div className="card">
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontSize:16 }}>JUDGE SUBMISSIONS</h3>
+          <button className="btn-ghost" onClick={loadSubs} style={{ fontSize:11, padding:'4px 10px' }}>🔄 Refresh</button>
+        </div>
+        <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginBottom:14 }}>
+          Correctness and Efficiency are 0–10 each. Final marks per problem = 70% correctness + 20% efficiency + 10% time bonus (computed automatically from submission time). Judge notes are only visible here.
+        </div>
+        {!data || (data.problems||[]).length===0 ? (
+          <div style={{ textAlign:'center', padding:24, color:'var(--text3)', fontFamily:'var(--font-mono)', fontSize:13 }}>
+            Nothing to judge yet — start Code Strike first.
+          </div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            {data.teams.filter(t=>Object.keys(t.submissions||{}).length>0).map(t=>(
+              <div key={t.team_id} style={{ border:`1px solid ${t.color}44`, borderRadius:8, padding:'12px 14px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                  <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:t.color }}>{t.team_name}</div>
+                  <div style={{ fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>
+                    {t.score !== null && t.score !== undefined ? `${t.score} marks` : 'not judged yet'}
+                  </div>
+                </div>
+                {data.problems.map(p=>{
+                  const sub = t.submissions?.[p.id];
+                  if (!sub) return (
+                    <div key={p.id} style={{ padding:'8px 0', borderTop:'1px solid var(--border)', fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>
+                      {p.title} — no submission
+                    </div>
+                  );
+                  const key = `${t.team_id}_${p.id}`;
+                  const judge = t.judge?.[p.id];
+                  const draft = judgeDraft[key] || {};
+                  return (
+                    <div key={p.id} style={{ padding:'10px 0', borderTop:'1px solid var(--border)' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+                        <div style={{ flex:1, minWidth:200 }}>
+                          <div style={{ fontFamily:'var(--font-mono)', fontSize:12 }}>
+                            <span style={{ fontWeight:600 }}>{p.title}</span>
+                            <span style={{ color:'var(--text3)' }}> · {p.marks} marks · {sub.language} · {new Date(sub.submitted_at).toLocaleTimeString()}{sub.resubmits > 0 ? ` · ${sub.resubmits} resubmit${sub.resubmits!==1?'s':''}` : ''}</span>
+                          </div>
+                          {p.judge_notes && (
+                            <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--info)', marginTop:2 }}>📝 {p.judge_notes}</div>
+                          )}
+                        </div>
+                        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+                          <button className="btn-ghost" style={{ fontSize:11, padding:'4px 10px' }}
+                            onClick={()=>setOpenCode(openCode===key?null:key)}>
+                            {openCode===key ? '▲ Hide Code' : '▼ View Code'}
+                          </button>
+                          <input type="number" min={0} max={10} placeholder="C 0-10"
+                            value={draft.correctness ?? judge?.correctness ?? ''}
+                            onChange={e=>setJudgeDraft(j=>({ ...j, [key]: { ...draft, correctness: e.target.value } }))}
+                            style={{ width:70, padding:'4px 6px', fontSize:12, fontFamily:'var(--font-mono)' }}/>
+                          <input type="number" min={0} max={10} placeholder="E 0-10"
+                            value={draft.efficiency ?? judge?.efficiency ?? ''}
+                            onChange={e=>setJudgeDraft(j=>({ ...j, [key]: { ...draft, efficiency: e.target.value } }))}
+                            style={{ width:70, padding:'4px 6px', fontSize:12, fontFamily:'var(--font-mono)' }}/>
+                          <button className="btn-primary" style={{ fontSize:11, padding:'5px 12px' }}
+                            onClick={()=>emit('admin:judge_codestrike',{
+                              team_id: t.team_id, problem_id: p.id,
+                              correctness: draft.correctness ?? judge?.correctness ?? 0,
+                              efficiency: draft.efficiency ?? judge?.efficiency ?? 0,
+                            })}>
+                            {judge ? 'Update' : 'Score'}
+                          </button>
+                          {judge && <span style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--accent)' }}>✓ C{judge.correctness}/E{judge.efficiency}</span>}
+                        </div>
+                      </div>
+                      {openCode===key && (
+                        <pre style={{
+                          fontFamily:'var(--font-mono)', fontSize:12, lineHeight:1.5,
+                          background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6,
+                          padding:12, overflowX:'auto', whiteSpace:'pre', marginTop:10, maxHeight:340, overflowY:'auto',
+                        }}>{sub.code}</pre>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {data.teams.filter(t=>Object.keys(t.submissions||{}).length>0).length===0 && (
+              <div style={{ textAlign:'center', padding:16, color:'var(--text3)', fontFamily:'var(--font-mono)', fontSize:13 }}>No code submitted yet.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── CODE ARENA: Tie-break tab — pick tied teams, fire a question ──
+function TieBreakTab({ state, emit }) {
+  const s = state.app_state;
+  const tb = s.tiebreak;
+  const cfg = s.event_config || {};
+  const enabled = cfg.phases_enabled || [];
+  const [teamIds, setTeamIds] = useState([]);
+  const [customQ, setCustomQ] = useState('');
+  const [customA, setCustomA] = useState('');
+  // The starting admin socket receives the full question (with answer) via
+  // admin:state_delta once; later sanitized broadcasts overwrite it in
+  // app_state, so keep the last seen answer locally for display.
+  const answerRef = useRef(null);
+  useEffect(() => {
+    if (tb?.question?.answer || tb?.question?.answers) {
+      answerRef.current = tb.question.answer || tb.question.answers?.[0];
+    }
+    if (!tb) answerRef.current = null;
+  }, [tb]);
+
+  // Combined totals help spot the actual tie
+  const totalOf = t =>
+    (enabled.includes('quiz_round') ? (t.quiz_marks_scored||0) : 0)
+    + (enabled.includes('bug_hunt') ? (t.bughunt_score||0) : 0)
+    + (enabled.includes('code_strike') ? (t.codestrike_score||0) : 0);
+  const ranked = [...state.teams].filter(t=>!t.is_eliminated).sort((a,b)=>totalOf(b)-totalOf(a));
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      {tb ? (
+        <div className="card card-lg" style={{ border:'1px solid var(--warning)' }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--warning)', marginBottom:12 }}>⚡ TIE-BREAK LIVE</h3>
+          <div style={{ fontSize:15, marginBottom:8, whiteSpace:'pre-wrap' }}>{tb.question?.question}</div>
+          {answerRef.current && (
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--accent)', marginBottom:12 }}>Answer: {answerRef.current}</div>
+          )}
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)', marginBottom:12 }}>
+            Between: {tb.team_ids.map(id=>state.teams.find(t=>t.id===id)?.name).filter(Boolean).join(' vs ')}
+          </div>
+          {(tb.answers||[]).length > 0 && (
+            <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:12 }}>
+              {tb.answers.map((a,i)=>(
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'6px 12px', background:'var(--bg3)', borderRadius:6, fontFamily:'var(--font-mono)', fontSize:13 }}>
+                  <span style={{ color:a.color }}>{a.team_name}</span>
+                  <span style={{ color:a.correct?'var(--accent)':'var(--danger)' }}>{a.correct?'✅':'❌'} {(a.time_ms/1000).toFixed(1)}s</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {tb.winner ? (
+            <div style={{ padding:'12px 16px', border:'1px solid var(--accent)', borderRadius:8, textAlign:'center', fontFamily:'var(--font-display)', fontSize:18, color:'var(--accent)', marginBottom:12 }}>
+              🏆 {tb.winner.team_name} — {(tb.winner.time_ms/1000).toFixed(1)}s
+            </div>
+          ) : (
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)', marginBottom:12 }}>Waiting for the first correct answer...</div>
+          )}
+          <button className="btn-ghost" style={{ width:'100%', padding:12 }}
+            onClick={()=>{ if(confirm('Clear this tie-break from all screens?')) emit('admin:end_tiebreak',{}); }}>
+            ✖ Clear Tie-Break
+          </button>
+        </div>
+      ) : (
+        <div className="card card-lg" style={{ border:'1px solid var(--warning)' }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--warning)', marginBottom:8 }}>⚡ START A TIE-BREAK</h3>
+          <div style={{ fontSize:13, color:'var(--text2)', marginBottom:14, lineHeight:1.6 }}>
+            Pick the tied teams and fire one rapid-fire question at them. The server timestamps every answer — the first correct team wins and gets a ⚡ tie-break win (used to order equal totals on the final leaderboard).
+          </div>
+
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Select teams (2+) — sorted by current total</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:14, maxHeight:260, overflowY:'auto' }}>
+            {ranked.map((t,i)=>{
+              const selected = teamIds.includes(t.id);
+              return (
+                <label key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:selected?`${t.color}11`:'var(--bg3)', border:`1px solid ${selected?t.color+'44':'var(--border)'}`, borderRadius:6, cursor:'pointer' }}>
+                  <input type="checkbox" checked={selected}
+                    onChange={e=>setTeamIds(ids=>e.target.checked?[...ids,t.id]:ids.filter(id=>id!==t.id))}
+                    style={{ accentColor:t.color }}/>
+                  <span style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', width:26 }}>#{i+1}</span>
+                  <div style={{ width:10, height:10, borderRadius:'50%', background:t.color, flexShrink:0 }}/>
+                  <span style={{ fontFamily:'var(--font-mono)', fontSize:13, flex:1 }}>{t.name}</span>
+                  <span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--accent)' }}>{Math.round(totalOf(t)*10)/10}m{(t.tiebreak_wins||0)>0?` ⚡${t.tiebreak_wins}`:''}</span>
+                </label>
+              );
+            })}
+          </div>
+
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Question — leave blank for a random rapid-fire question</div>
+          <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:10, marginBottom:14 }}>
+            <input value={customQ} onChange={e=>setCustomQ(e.target.value)} placeholder="Custom question (optional)"/>
+            <input value={customA} onChange={e=>setCustomA(e.target.value)} placeholder="Its answer" style={{ fontFamily:'var(--font-mono)' }}/>
+          </div>
+
+          <button className="btn-warning" style={{ width:'100%', padding:14, fontSize:15 }}
+            disabled={teamIds.length < 2 || (!!customQ.trim() !== !!customA.trim())}
+            onClick={()=>{ emit('admin:start_tiebreak',{ team_ids:teamIds, custom_question:customQ, custom_answer:customA }); setTeamIds([]); setCustomQ(''); setCustomA(''); }}>
+            ⚡ FIRE TIE-BREAKER at {teamIds.length} team{teamIds.length!==1?'s':''}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

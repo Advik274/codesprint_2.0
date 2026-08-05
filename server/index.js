@@ -66,6 +66,22 @@ export const EMPTY_DB = () => ({
     quiz_paused_remaining_ms: null,
     quiz_questions: [],
     quiz_member_answers: {},
+    // CODE ARENA: Mission 2 — Bug Hunt
+    bughunt_active: false,
+    bughunt_timer_end: null,
+    bughunt_paused: false,
+    bughunt_paused_remaining_ms: null,
+    bughunt_programs: [],
+    // CODE ARENA: Mission 3 — Code Strike
+    codestrike_active: false,
+    codestrike_timer_end: null,
+    codestrike_paused: false,
+    codestrike_paused_remaining_ms: null,
+    codestrike_problems: [],
+    codestrike_started_at: null,
+    codestrike_duration_ms: null,
+    // CODE ARENA: tie-breaker (null = no tie-break running)
+    tiebreak: null,
     // Phase 2
     phase2_paused: false, phase2_timer_end: null, phase2_paused_remaining_ms: null,
     phase3_timer_end: null, phase3_paused: false, phase3_paused_remaining_ms: null,
@@ -94,6 +110,20 @@ export const EMPTY_DB = () => ({
       audience_weight_percent: 10,
       // Results reveal: 0 = reveal every team, N = only the top N places
       reveal_top_n: 0,
+      // CODE ARENA: which built-in bank the quiz round draws from
+      // ('dsa' = original gauntlet pool, 'arena' = multi-topic pool, 'both')
+      quiz_question_source: 'dsa',
+      // CODE ARENA: mission weights for the combined leaderboard
+      quiz_marks: 20,
+      bughunt_duration_min: 30,
+      bughunt_marks: 30,
+      bughunt_num_programs: 5,
+      codestrike_duration_min: 45,
+      codestrike_marks: 50,
+      // Protected Mode: during timed rounds (quiz / bug hunt / tie-break),
+      // team browsers block copy/paste + right-click and every tab/app
+      // switch is recorded and reported to admin as a violation.
+      protected_mode: false,
       // V7: Custom Questions
       custom_questions: [],
     },
@@ -148,6 +178,30 @@ function patchDB() {
   if (s.event_config.quiz_num_questions === undefined) s.event_config.quiz_num_questions = 50;
   if (s.event_config.quiz_duration_min === undefined) s.event_config.quiz_duration_min = 30;
   if (!s.event_config.custom_questions) s.event_config.custom_questions = [];
+  // CODE ARENA: config defaults
+  if (s.event_config.quiz_question_source === undefined) s.event_config.quiz_question_source = 'dsa';
+  if (s.event_config.quiz_marks === undefined) s.event_config.quiz_marks = 20;
+  if (s.event_config.bughunt_duration_min === undefined) s.event_config.bughunt_duration_min = 30;
+  if (s.event_config.bughunt_marks === undefined) s.event_config.bughunt_marks = 30;
+  if (s.event_config.bughunt_num_programs === undefined) s.event_config.bughunt_num_programs = 5;
+  if (s.event_config.codestrike_duration_min === undefined) s.event_config.codestrike_duration_min = 45;
+  if (s.event_config.codestrike_marks === undefined) s.event_config.codestrike_marks = 50;
+  if (s.event_config.protected_mode === undefined) s.event_config.protected_mode = false;
+  if (s.event_config.theme === undefined) s.event_config.theme = null;
+  // CODE ARENA: app_state defaults
+  if (s.bughunt_active === undefined) s.bughunt_active = false;
+  if (s.bughunt_timer_end === undefined) s.bughunt_timer_end = null;
+  if (s.bughunt_paused === undefined) s.bughunt_paused = false;
+  if (s.bughunt_paused_remaining_ms === undefined) s.bughunt_paused_remaining_ms = null;
+  if (!s.bughunt_programs) s.bughunt_programs = [];
+  if (s.codestrike_active === undefined) s.codestrike_active = false;
+  if (s.codestrike_timer_end === undefined) s.codestrike_timer_end = null;
+  if (s.codestrike_paused === undefined) s.codestrike_paused = false;
+  if (s.codestrike_paused_remaining_ms === undefined) s.codestrike_paused_remaining_ms = null;
+  if (!s.codestrike_problems) s.codestrike_problems = [];
+  if (s.codestrike_started_at === undefined) s.codestrike_started_at = null;
+  if (s.codestrike_duration_ms === undefined) s.codestrike_duration_ms = null;
+  if (s.tiebreak === undefined) s.tiebreak = null;
   if (s.speed_demo_current_team_id === undefined) s.speed_demo_current_team_id = null;
   if (s.speed_demo_timer_end === undefined) s.speed_demo_timer_end = null;
   if (s.speed_demo_order === undefined) s.speed_demo_order = [];
@@ -159,6 +213,16 @@ function patchDB() {
     if (t.quiz_score === undefined) t.quiz_score = 0;
     if (!t.quiz_member_scores) t.quiz_member_scores = {};
     if (t.phase3_group === undefined) t.phase3_group = null;
+    // CODE ARENA: per-team mission fields
+    if (t.quiz_marks_scored === undefined) t.quiz_marks_scored = null;
+    if (t.bughunt_submission === undefined) t.bughunt_submission = null;
+    if (t.bughunt_results === undefined) t.bughunt_results = null;
+    if (t.bughunt_score === undefined) t.bughunt_score = null;
+    if (!t.codestrike_submissions) t.codestrike_submissions = {};
+    if (t.codestrike_judge === undefined) t.codestrike_judge = null;
+    if (t.codestrike_score === undefined) t.codestrike_score = null;
+    if (t.tiebreak_wins === undefined) t.tiebreak_wins = 0;
+    if (t.violations === undefined) t.violations = null;
   });
 }
 
@@ -247,7 +311,10 @@ app.get('/api/ping', (_, res) => {
   });
 });
 
-app.get('/api/state', (_, res) => res.json({ app_state: db.app_state }));
+// Sanitized — this endpoint is public, and raw app_state carries quiz/
+// bug-hunt/tie-break answers while a round is live (same leak class as
+// the state:sync fix in buildClientState below).
+app.get('/api/state', (_, res) => res.json({ app_state: sanitizeAppState(db.app_state) }));
 app.get('/api/teams', (_, res) => res.json(db.teams.map(({ id, name, color, year }) => ({ id, name, color, year }))));
 
 app.get('/api/admin/backup', (req, res) => {
@@ -330,11 +397,52 @@ app.get('/api/admin/phase3-export', (req, res) => {
   res.send(csv);
 });
 
+// CODE ARENA: Code Strike submissions export — one row per team per problem,
+// including the pasted code, so the evaluation team can grade offline too.
+app.get('/api/admin/codestrike-export', (req, res) => {
+  if (!authAdmin(req.headers['x-admin-token'])) return res.status(401).json({ error: 'Unauthorized' });
+  const rows = [
+    ['Team Name', 'Year', 'Problem', 'Language', 'Submitted At', 'Correctness', 'Efficiency', 'Problem Marks', 'Total Score', 'Code']
+  ];
+  const problems = db.app_state.codestrike_problems || [];
+  db.teams.forEach(t => {
+    Object.entries(t.codestrike_submissions || {}).forEach(([pid, sub]) => {
+      const prob = problems.find(p => p.id === pid);
+      const judge = t.codestrike_judge?.[pid];
+      rows.push([
+        t.name, t.year,
+        prob ? `${prob.title} (${prob.difficulty})` : pid,
+        sub.language || '', sub.submitted_at || '',
+        judge?.correctness ?? '', judge?.efficiency ?? '',
+        prob?.marks ?? '',
+        t.codestrike_score ?? '',
+        sub.code || '',
+      ]);
+    });
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="codestrike_submissions_${Date.now()}.csv"`);
+  res.send(csv);
+});
 
-// Serve React build — single server deployment
-app.use(express.static(clientBuild));
+
+// Serve React build — single server deployment.
+// index.html and sw.js must never be cached by the browser: index.html
+// points at the hashed JS bundle, so a cached copy pins every visitor to
+// the previous build (the same class of bug the service worker had).
+// Hashed /assets/* files are immutable and safe to cache hard.
+const noStore = (res, filePath) => {
+  if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  } else if (filePath.includes(`${'assets'}`)) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  }
+};
+app.use(express.static(clientBuild, { setHeaders: noStore }));
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api') && !req.path.startsWith('/socket.io')) {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.sendFile(join(clientBuild, 'index.html'));
   }
 });
@@ -350,9 +458,44 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`   /api/ping for health | /api/admin/backup for DB backup\n`);
 });
 
+// Strip grading secrets from a question/program before it leaves the server
+// to a non-admin socket (answer, accepted variants, hints, judge notes).
+export function sanitizeQuestion(q) {
+  if (!q || typeof q !== 'object') return q;
+  const { answer, answers, hint, judge_notes, ...safe } = q;
+  return safe;
+}
+
+// SECURITY FIX: state:sync used to ship db.app_state verbatim — during a
+// quiz round that included quiz_questions WITH every correct answer, plus
+// quiz_member_answers with every member's raw submissions, all readable
+// from any team's browser (React DevTools / raw WebSocket frames). The
+// same shape of leak would apply to the new Bug Hunt fixes, Code Strike
+// judge notes, and the tie-break answer, so all of them are sanitized
+// here in one place. Grading still uses the untouched db.app_state.
+function sanitizeAppState(s) {
+  const safe = { ...s };
+  safe.quiz_questions = (s.quiz_questions || []).map(sanitizeQuestion);
+  // Summarize member answers to { team_id: { member_name: true } } — the
+  // shape quiz:submission_update already broadcasts; clients only ever
+  // check truthiness / count of these keys.
+  safe.quiz_member_answers = Object.fromEntries(
+    Object.entries(s.quiz_member_answers || {}).map(([tid, members]) =>
+      [tid, Object.fromEntries(Object.keys(members || {}).map(m => [m, true]))]
+    )
+  );
+  safe.bughunt_programs = (s.bughunt_programs || []).map(sanitizeQuestion);
+  safe.codestrike_problems = (s.codestrike_problems || []).map(sanitizeQuestion);
+  safe.tiebreak = s.tiebreak ? {
+    ...s.tiebreak,
+    question: sanitizeQuestion(s.tiebreak.question),
+  } : null;
+  return safe;
+}
+
 export function buildClientState(db) {
   return {
-    app_state: db.app_state,
+    app_state: sanitizeAppState(db.app_state),
     phase_history_count: db.phase_history?.length || 0,
     teams: db.teams.map(({ _pending, _defenseOptions, passcode, members, ...t }) => ({
       id: t.id, name: t.name, color: t.color, year: t.year,
@@ -368,6 +511,18 @@ export function buildClientState(db) {
       phase3_problem: t.phase3_problem,
       phase3_group: t.phase3_group || null,
       zone_ids_captured: t.zone_ids_captured || [],
+      // CODE ARENA: mission status is public (scoreboard data); the actual
+      // submitted fixes/code never leave the server except to admin pulls.
+      quiz_marks_scored: t.quiz_marks_scored ?? null,
+      bughunt_score: t.bughunt_score ?? null,
+      bughunt_submitted_at: t.bughunt_submission?.submitted_at || null,
+      bughunt_per_program: t.bughunt_results?.per_program || null,
+      codestrike_score: t.codestrike_score ?? null,
+      codestrike_submitted: Object.fromEntries(
+        Object.entries(t.codestrike_submissions || {}).map(([pid, sub]) => [pid, sub.submitted_at])
+      ),
+      tiebreak_wins: t.tiebreak_wins || 0,
+      violations: t.violations || null,
     })),
     zones: db.zones.map(({ _pending, _defenseOptions, ...z }) => ({
       id: z.id, name: z.name, location: z.location,

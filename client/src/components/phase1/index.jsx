@@ -133,7 +133,7 @@ export function QuestionCard({ question, teamId, onSubmitted }) {
                 <button key={opt} onClick={() => setSelected(opt)} style={{
                   textAlign: 'left',
                   padding: '12px 16px',
-                  background: selected === opt ? 'rgba(0,255,136,0.1)' : 'var(--bg3)',
+                  background: selected === opt ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'var(--bg3)',
                   border: `1px solid ${selected === opt ? 'var(--accent)' : 'var(--border)'}`,
                   borderRadius: 6,
                   color: selected === opt ? 'var(--accent)' : 'var(--text)',
@@ -221,7 +221,7 @@ export function EliminationOverlay({ team, onDismiss }) {
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 9999,
-      background: 'rgba(255,51,85,0.12)',
+      background: 'color-mix(in srgb, var(--danger) 12%, transparent)',
       backdropFilter: 'blur(8px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       animation: 'fadeIn 0.3s ease',
@@ -251,8 +251,8 @@ export function Phase1Leaderboard({ teams }) {
           <div key={team.id} style={{
             display: 'flex', alignItems: 'center', gap: 12,
             padding: '8px 12px', borderRadius: 6,
-            background: i === 0 ? 'rgba(0,255,136,0.06)' : 'var(--bg3)',
-            border: `1px solid ${i === 0 ? 'rgba(0,255,136,0.2)' : 'var(--border)'}`,
+            background: i === 0 ? 'color-mix(in srgb, var(--accent) 6%, transparent)' : 'var(--bg3)',
+            border: `1px solid ${i === 0 ? 'color-mix(in srgb, var(--accent) 20%, transparent)' : 'var(--border)'}`,
             opacity: team.is_eliminated ? 0.4 : 1,
           }}>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: i < 3 ? ['var(--accent)', 'var(--warning)', 'var(--info)'][i] : 'var(--text3)', width: 24, textAlign: 'center' }}>

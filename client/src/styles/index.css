@@ -1,19 +1,32 @@
+/* ═══════════════════════════════════════════════════════════════
+   "COLOSSEUM" — molten gold on torchlit ink.
+   Gold = points/victory · terracotta = eliminations/danger ·
+   ember = warnings · steel = info · Tyrian = imperial flair.
+   Light theme = sun-bleached marble & sandstone.
+   Everything keys off these variables; component code stays put.
+   ═══════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #0a0a0f;
-  --bg2: #111118;
-  --bg3: #1a1a25;
-  --border: #2a2a3a;
-  --border2: #3a3a4a;
-  --text: #e8e8f0;
-  --text2: #9090a8;
-  --text3: #5a5a70;
-  --accent: #00ff88;
-  --accent2: #00cc66;
-  --danger: #ff3355;
-  --warning: #ffaa00;
-  --info: #00aaff;
-  --purple: #aa55ff;
-  --font-display: 'Rajdhani', sans-serif;
+  --bg: #16110b;
+  --bg2: #1e1812;
+  --bg3: #2a2118;
+  --border: #372b1e;
+  --border2: #4e3d29;
+  --text: #f0e6d2;
+  --text2: #b3a488;
+  --text3: #7a6d55;
+  --accent: #e3b341;
+  --accent2: #c99b32;
+  --danger: #e04340;
+  --warning: #e8863a;
+  --info: #6ea7c2;
+  --purple: #b8709b;
+  /* Text-on-color tokens — recomputed by the theme engine when the
+     admin picks custom colors, so button text always stays readable */
+  --on-accent: #1a1206;
+  --on-danger: #ffffff;
+  --on-warning: #1a1206;
+  --on-info: #0f1a20;
+  --font-display: 'Cinzel', 'Times New Roman', serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-body: 'Inter', sans-serif;
 }
@@ -28,13 +41,14 @@ body {
   overflow-x: hidden;
 }
 
+/* Torchlight from above, ember glow from the corner */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: 
-    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,255,136,0.04) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 50% at 80% 80%, rgba(0,170,255,0.04) 0%, transparent 60%);
+  background:
+    radial-gradient(ellipse 70% 45% at 50% -10%, color-mix(in srgb, var(--accent) 7%, transparent) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 50% at 85% 95%, color-mix(in srgb, var(--danger) 5%, transparent) 0%, transparent 60%);
   pointer-events: none;
   z-index: 0;
 }
@@ -49,12 +63,13 @@ body::before {
 /* ── Typography ─────────────────────────────────── */
 h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 
-/* ── Cards ─────────────────────────────────────── */
+/* ── Cards — engraved plaques ───────────────────── */
 .card {
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
+  box-shadow: inset 0 1px 0 rgba(240,230,210,0.04);
 }
 
 .card-lg { padding: 24px; border-radius: 12px; }
@@ -63,8 +78,8 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 700; letter-spac
 button {
   cursor: pointer;
   font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   border: none;
   border-radius: 6px;
@@ -73,33 +88,41 @@ button {
   transition: all 0.15s;
 }
 
+/* Gradients derive from the variables so custom themes restyle every
+   button automatically — no hardcoded color anywhere below. */
 .btn-primary {
-  background: var(--accent);
-  color: #000;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 85%, #fff) 0%, color-mix(in srgb, var(--accent) 92%, #000) 100%);
+  color: var(--on-accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, #000);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 2px 8px color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.btn-primary:hover { background: var(--accent2); transform: translateY(-1px); }
+.btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
 
 .btn-danger {
-  background: var(--danger);
-  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 88%, #fff) 0%, color-mix(in srgb, var(--danger) 85%, #000) 100%);
+  color: var(--on-danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, #000);
 }
-.btn-danger:hover { opacity: 0.85; }
+.btn-danger:hover { opacity: 0.9; }
 
 .btn-ghost {
   background: transparent;
   border: 1px solid var(--border2);
   color: var(--text2);
+  box-shadow: none;
 }
 .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
 
 .btn-warning {
-  background: var(--warning);
-  color: #000;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 85%, #fff) 0%, color-mix(in srgb, var(--warning) 88%, #000) 100%);
+  color: var(--on-warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, #000);
 }
 
 .btn-info {
-  background: var(--info);
-  color: #000;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--info) 80%, #fff) 0%, color-mix(in srgb, var(--info) 88%, #000) 100%);
+  color: var(--on-info);
+  border: 1px solid color-mix(in srgb, var(--info) 55%, #000);
 }
 
 button:disabled {
@@ -136,11 +159,11 @@ input:focus, select:focus, textarea:focus {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
-.badge-success { background: rgba(0,255,136,0.15); color: var(--accent); border: 1px solid rgba(0,255,136,0.3); }
-.badge-danger  { background: rgba(255,51,85,0.15);  color: var(--danger); border: 1px solid rgba(255,51,85,0.3); }
-.badge-warning { background: rgba(255,170,0,0.15);  color: var(--warning); border: 1px solid rgba(255,170,0,0.3); }
-.badge-info    { background: rgba(0,170,255,0.15);  color: var(--info); border: 1px solid rgba(0,170,255,0.3); }
-.badge-purple  { background: rgba(170,85,255,0.15); color: var(--purple); border: 1px solid rgba(170,85,255,0.3); }
+.badge-success { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.badge-danger  { background: color-mix(in srgb, var(--danger) 14%, transparent);  color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+.badge-warning { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent); }
+.badge-info    { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 35%, transparent); }
+.badge-purple  { background: color-mix(in srgb, var(--purple) 14%, transparent); color: var(--purple); border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent); }
 
 /* ── Divider ────────────────────────────────────── */
 .divider { height: 1px; background: var(--border); margin: 16px 0; }
@@ -156,8 +179,8 @@ input:focus, select:focus, textarea:focus {
 }
 
 @keyframes pulse-accent {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0,255,136,0.3); }
-  50% { box-shadow: 0 0 0 8px rgba(0,255,136,0); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+  50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); }
 }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -186,37 +209,39 @@ input:focus, select:focus, textarea:focus {
 
 /* ── Sprint 4: Zone map pulse animation ─────────── */
 @keyframes pulse-warn {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255,170,0,0); }
-  50% { box-shadow: 0 0 0 6px rgba(255,170,0,0.25); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--warning) 25%, transparent); }
 }
 
 /* ── Sprint 4: Ticker scrollbar hide ────────────── */
 .ticker-track::-webkit-scrollbar { display: none; }
 
 /* ── Light theme override ────────────────────────
-   Dark is the default look (matches prefers-color-scheme); the toggle
-   stamps data-theme="light" on <html> to opt into this instead. */
+   Sun-bleached marble & sandstone. Dark is the default look; the
+   toggle stamps data-theme="light" on <html> to opt into this. */
 :root[data-theme="light"] {
-  --bg: #f4f5f9;
-  --bg2: #ffffff;
-  --bg3: #edeff5;
-  --border: #dde1ea;
-  --border2: #c7cddb;
-  --text: #15151f;
-  --text2: #47475a;
-  --text3: #85859c;
-  --accent: #00a862;
-  --accent2: #00915a;
-  --danger: #d81b46;
-  --warning: #ad6800;
-  --info: #0072cc;
-  --purple: #7c3aed;
+  --bg: #f0e9db;
+  --bg2: #faf6ec;
+  --bg3: #e5dcc8;
+  --border: #d5c9b0;
+  --border2: #bfae8d;
+  --text: #241c11;
+  --text2: #5a4d38;
+  --text3: #8d7d61;
+  --accent: #9a6d0c;
+  --accent2: #7d5a0a;
+  --danger: #b3372b;
+  --warning: #a85a17;
+  --info: #38677f;
+  --purple: #8a4a6d;
+  /* Light-theme colors are dark, so text-on-color flips to light */
+  --on-accent: #fff8e8;
+  --on-danger: #ffffff;
+  --on-warning: #fff6ea;
+  --on-info: #f0f6f9;
 }
-:root[data-theme="light"] body::before {
-  background:
-    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,168,98,0.05) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 50% at 80% 80%, rgba(0,114,204,0.05) 0%, transparent 60%);
-}
+/* body::before glow + all button gradients derive from the variables
+   above via color-mix, so no per-theme overrides are needed anymore. */
 
 .theme-toggle {
   background: transparent;
@@ -244,10 +269,11 @@ input:focus, select:focus, textarea:focus {
 .help-fab {
   position: fixed; bottom: 22px; right: 20px; z-index: 400;
   padding: 12px 18px; border-radius: 30px;
-  background: var(--warning); color: #000; font-size: 13px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 85%, #fff) 0%, color-mix(in srgb, var(--warning) 88%, #000) 100%);
+  color: var(--on-warning); font-size: 13px;
   display: flex; align-items: center; gap: 8px;
-  box-shadow: 0 4px 18px rgba(255,170,0,0.45);
-  border: none; cursor: pointer;
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--warning) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, #000); cursor: pointer;
   font-family: var(--font-display); font-weight: 700; letter-spacing: 0.06em;
 }
 .help-fab:disabled { opacity: 0.6; cursor: default; }
@@ -291,10 +317,10 @@ input:focus, select:focus, textarea:focus {
   z-index: 450;
   max-width: 340px;
   background: var(--bg2);
-  border: 1px solid rgba(170,85,255,0.35);
+  border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent);
   border-radius: 10px;
   padding: 16px 34px 16px 18px;
-  box-shadow: 0 8px 28px rgba(170,85,255,0.15);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--purple) 15%, transparent);
   animation: memeSlideIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
 }
 .meme-popup-label {

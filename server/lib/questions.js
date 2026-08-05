@@ -713,10 +713,17 @@ function fisherYates(arr) {
 
 // Pick N random questions from combined pool for quiz round
 // Options within each MCQ question are also shuffled so answer order varies
-export function pickQuizQuestions(n, usedIds, customQuestions = []) {
+// `source` selects the built-in bank: 'dsa' (gauntlet pool — original
+// behaviour), 'arena' (CODE ARENA multi-topic pool), or 'both'.
+// Custom questions are always included regardless of source.
+export function pickQuizQuestions(n, usedIds, customQuestions = [], source = 'dsa') {
+  const builtin =
+    source === 'arena' ? ARENA_MCQ_POOL :
+    source === 'both' ? [...GAUNTLET_QUESTIONS, ...ARENA_MCQ_POOL] :
+    GAUNTLET_QUESTIONS;
   const allQ = [
     ...customQuestions.filter(q => !usedIds.includes(q.id)),
-    ...GAUNTLET_QUESTIONS.filter(q => !usedIds.includes(q.id)),
+    ...builtin.filter(q => !usedIds.includes(q.id)),
   ];
   const shuffled = fisherYates(allQ);
   return shuffled.slice(0, Math.min(n, shuffled.length)).map(q => {
@@ -727,3 +734,367 @@ export function pickQuizQuestions(n, usedIds, customQuestions = []) {
     return q;
   });
 }
+
+// ═════════════════════════════════════════════════════════════════
+// CODE ARENA — Mission 1 "Intelligence Scan" MCQ pool
+// Multi-topic bank per the Reboot Club event plan: Java, C/C++, Python,
+// DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning.
+// Pitched at 1st/2nd-year students. Equal weight (10 pts each) so the
+// quiz normalises cleanly to the mission's marks.
+// ═════════════════════════════════════════════════════════════════
+export const ARENA_MCQ_POOL = [
+
+  // ── JAVA ─────────────────────────────────────────────────────
+  { id:'a001', type:'mcq', topic:'java', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which keyword is used to inherit a class in Java?',
+    options:['implements','extends','inherits','super'], answer:'extends' },
+  { id:'a002', type:'mcq', topic:'java', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What is the default value of an int instance variable in Java?',
+    options:['null','undefined','0','-1'], answer:'0' },
+  { id:'a003', type:'mcq', topic:'java', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which method is the entry point of a Java program?',
+    options:['start()','main()','run()','init()'], answer:'main()' },
+  { id:'a004', type:'mcq', topic:'java', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which of these is NOT a primitive type in Java?',
+    options:['int','boolean','String','char'], answer:'String' },
+  { id:'a005', type:'mcq', topic:'java', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What does JVM stand for?',
+    options:['Java Virtual Machine','Java Verified Module','Just-in-time Virtual Memory','Java Variable Manager'], answer:'Java Virtual Machine' },
+
+  // ── C ────────────────────────────────────────────────────────
+  { id:'a006', type:'mcq', topic:'c', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which header file is required to use printf() in C?',
+    options:['<stdlib.h>','<string.h>','<stdio.h>','<math.h>'], answer:'<stdio.h>' },
+  { id:'a007', type:'mcq', topic:'c', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What is the format specifier for printing an int in C?',
+    options:['%f','%c','%s','%d'], answer:'%d' },
+  { id:'a008', type:'mcq', topic:'c', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which operator gives the ADDRESS of a variable in C?',
+    options:['*','&','#','@'], answer:'&' },
+  { id:'a009', type:'mcq', topic:'c', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'What does malloc() return when memory allocation FAILS?',
+    options:['0 (the integer)','an empty struct','NULL','It crashes the program'], answer:'NULL' },
+
+  // ── C++ ──────────────────────────────────────────────────────
+  { id:'a010', type:'mcq', topic:'cpp', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which of these is a feature of C++ but NOT of C?',
+    options:['Pointers','Classes','Arrays','Functions'], answer:'Classes' },
+  { id:'a011', type:'mcq', topic:'cpp', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'cout in C++ is defined in which header?',
+    options:['<stdio.h>','<iostream>','<output.h>','<console.h>'], answer:'<iostream>' },
+  { id:'a012', type:'mcq', topic:'cpp', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'Which access specifier makes class members accessible ONLY inside the class itself?',
+    options:['public','protected','private','internal'], answer:'private' },
+  { id:'a013', type:'mcq', topic:'cpp', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'What is the output of: cout << 7 / 2; in C++?',
+    options:['3.5','3','4','7/2'], answer:'3' },
+
+  // ── PYTHON ───────────────────────────────────────────────────
+  { id:'a014', type:'mcq', topic:'python', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which keyword defines a function in Python?',
+    options:['function','fun','def','define'], answer:'def' },
+  { id:'a015', type:'mcq', topic:'python', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What does len("Hello") return in Python?',
+    options:['4','5','6','Error'], answer:'5' },
+  { id:'a016', type:'mcq', topic:'python', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which of these creates an empty DICTIONARY in Python?',
+    options:['[]','()','{}','<>'], answer:'{}' },
+  { id:'a017', type:'mcq', topic:'python', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What is the output of print(2 ** 3) in Python?',
+    options:['6','8','9','23'], answer:'8' },
+  { id:'a018', type:'mcq', topic:'python', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'What is the output of print(type([])) in Python?',
+    options:["<class 'tuple'>","<class 'dict'>","<class 'list'>","<class 'array'>"], answer:"<class 'list'>" },
+
+  // ── DBMS ─────────────────────────────────────────────────────
+  { id:'a019', type:'mcq', topic:'dbms', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What does SQL stand for?',
+    options:['Standard Query Logic','Structured Query Language','Simple Question Language','System Query Layer'], answer:'Structured Query Language' },
+  { id:'a020', type:'mcq', topic:'dbms', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which SQL command adds a NEW row to a table?',
+    options:['ADD','APPEND','INSERT','CREATE'], answer:'INSERT' },
+  { id:'a021', type:'mcq', topic:'dbms', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'Which statement about a PRIMARY KEY is TRUE?',
+    options:['It can contain NULL values','It must be unique and non-NULL','It can repeat across rows','Every table must have exactly two'], answer:'It must be unique and non-NULL' },
+  { id:'a022', type:'mcq', topic:'dbms', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'Which SQL clause filters groups AFTER GROUP BY is applied?',
+    options:['WHERE','FILTER','HAVING','ORDER BY'], answer:'HAVING' },
+  { id:'a023', type:'mcq', topic:'dbms', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'Which command removes ALL rows from a table but keeps its structure?',
+    options:['DROP TABLE','DELETE DATABASE','TRUNCATE TABLE','REMOVE ALL'], answer:'TRUNCATE TABLE' },
+
+  // ── OPERATING SYSTEMS ────────────────────────────────────────
+  { id:'a024', type:'mcq', topic:'os', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which of these is NOT an operating system?',
+    options:['Linux','Windows','Oracle','macOS'], answer:'Oracle' },
+  { id:'a025', type:'mcq', topic:'os', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'In CPU scheduling, what does FCFS stand for?',
+    options:['First Come First Serve','Fast CPU Fast Serve','First Cache First Store','Final Come Final Serve'], answer:'First Come First Serve' },
+  { id:'a026', type:'mcq', topic:'os', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'A deadlock occurs when...',
+    options:['the CPU overheats','processes wait for each other\'s resources in a cycle','RAM is full','a program has an infinite loop'], answer:'processes wait for each other\'s resources in a cycle' },
+  { id:'a027', type:'mcq', topic:'os', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'Virtual memory allows...',
+    options:['programs to use more memory than physically installed RAM','the CPU to run faster','files to be deleted safely','two OSes to run at once'], answer:'programs to use more memory than physically installed RAM' },
+
+  // ── GIT ──────────────────────────────────────────────────────
+  { id:'a028', type:'mcq', topic:'git', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which command copies a remote repository to your machine?',
+    options:['git copy','git clone','git download','git checkout'], answer:'git clone' },
+  { id:'a029', type:'mcq', topic:'git', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which command records your staged changes into history?',
+    options:['git save','git push','git commit','git stage'], answer:'git commit' },
+  { id:'a030', type:'mcq', topic:'git', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which command shows which files are modified or staged?',
+    options:['git list','git status','git files','git diff --all'], answer:'git status' },
+  { id:'a031', type:'mcq', topic:'git', difficulty:'medium', points:10, time_limit_seconds:20,
+    question:'What does git pull do?',
+    options:['Uploads your commits to the remote','Deletes the local branch','Fetches remote changes and merges them into your branch','Creates a new repository'], answer:'Fetches remote changes and merges them into your branch' },
+
+  // ── HTML / CSS ───────────────────────────────────────────────
+  { id:'a032', type:'mcq', topic:'html_css', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which HTML tag creates a hyperlink?',
+    options:['<link>','<a>','<href>','<url>'], answer:'<a>' },
+  { id:'a033', type:'mcq', topic:'html_css', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which CSS property changes the TEXT colour of an element?',
+    options:['text-style','font-color','color','text-color'], answer:'color' },
+  { id:'a034', type:'mcq', topic:'html_css', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'What does CSS stand for?',
+    options:['Creative Style Sheets','Cascading Style Sheets','Computer Styled Sections','Coloured Style Syntax'], answer:'Cascading Style Sheets' },
+  { id:'a035', type:'mcq', topic:'html_css', difficulty:'easy', points:10, time_limit_seconds:20,
+    question:'Which tag renders the LARGEST heading in HTML?',
+    options:['<h6>','<head>','<h1>','<heading>'], answer:'<h1>' },
+
+  // ── APTITUDE ─────────────────────────────────────────────────
+  { id:'a036', type:'mcq', topic:'aptitude', difficulty:'easy', points:10, time_limit_seconds:25,
+    question:'A train covers 120 km in 2 hours. What is its average speed?',
+    options:['50 km/h','60 km/h','80 km/h','240 km/h'], answer:'60 km/h' },
+  { id:'a037', type:'mcq', topic:'aptitude', difficulty:'medium', points:10, time_limit_seconds:25,
+    question:'If 5 machines make 5 parts in 5 minutes, how long do 100 machines take to make 100 parts?',
+    options:['100 minutes','20 minutes','5 minutes','1 minute'], answer:'5 minutes' },
+  { id:'a038', type:'mcq', topic:'aptitude', difficulty:'easy', points:10, time_limit_seconds:25,
+    question:'What is 15% of 200?',
+    options:['15','20','30','45'], answer:'30' },
+
+  // ── LOGICAL REASONING ────────────────────────────────────────
+  { id:'a039', type:'mcq', topic:'logical', difficulty:'medium', points:10, time_limit_seconds:25,
+    question:'Complete the series: 2, 6, 12, 20, 30, ?',
+    options:['36','40','42','44'], answer:'42' },
+  { id:'a040', type:'mcq', topic:'logical', difficulty:'easy', points:10, time_limit_seconds:25,
+    question:'All Bloops are Razzies. All Razzies are Lazzies. Therefore all Bloops are definitely Lazzies.',
+    options:['True','False','Cannot be determined','Only on Sundays'], answer:'True' },
+  { id:'a041', type:'mcq', topic:'logical', difficulty:'easy', points:10, time_limit_seconds:25,
+    question:'Find the odd one out:',
+    options:['Square','Triangle','Circle','Rectangle'], answer:'Circle' },
+];
+
+// ═════════════════════════════════════════════════════════════════
+// CODE ARENA — Mission 2 "Bug Hunt" program pool
+// Each entry is one buggy program. Teams read the code and type the
+// corrected line(s). `answers` lists every accepted phrasing — graded
+// by the same lenient matcher used everywhere else (isAnswerCorrect),
+// and the admin can override marks per program from the review panel.
+// The event uses `bughunt_num_programs` of these (same set for every
+// team — fairness first).
+// ═════════════════════════════════════════════════════════════════
+export const BUG_HUNT_PROGRAMS = [
+  {
+    id: 'b001', language: 'python', title: 'Sum to N',
+    code: `def sum_to_n(n):
+    total = 0
+    for i in range(1, n):    # <-- something wrong here
+        total += i
+    return total
+
+print(sum_to_n(5))  # Should print 15, but prints 10`,
+    task: 'The function should add ALL numbers from 1 to n (inclusive). Write the corrected for-loop line.',
+    answers: ['for i in range(1, n+1):', 'for i in range(1, n + 1):', 'for i in range(n+1):', 'for i in range(1,n+1):'],
+    hint: 'range() stops one short of its end value.',
+  },
+  {
+    id: 'b002', language: 'python', title: 'Find Minimum',
+    code: `def find_min(nums):
+    smallest = nums[0]
+    for x in nums:
+        if x > smallest:    # <-- something wrong here
+            smallest = x
+    return smallest
+
+print(find_min([7, 2, 9, 4]))  # Should print 2, but prints 9`,
+    task: 'The function should return the SMALLEST number. Write the corrected if-line.',
+    answers: ['if x < smallest:', 'if smallest > x:'],
+    hint: 'Look at the comparison direction.',
+  },
+  {
+    id: 'b003', language: 'python', title: 'Class Average',
+    code: `def average(marks):
+    total = 0
+    for m in marks:
+        total += m
+    return total // len(marks)    # <-- something wrong here
+
+print(average([80, 85, 91]))  # Should print 85.33..., but prints 85`,
+    task: 'The average must keep its decimal part. Write the corrected return line.',
+    answers: ['return total / len(marks)'],
+    hint: 'Python has two division operators — they behave differently.',
+  },
+  {
+    id: 'b004', language: 'java', title: 'Password Check',
+    code: `public class Login {
+    public static void main(String[] args) {
+        String password = new String("reboot123");
+        String input = new String("reboot123");
+        if (password == input) {    // <-- something wrong here
+            System.out.println("Access granted");
+        } else {
+            System.out.println("Access denied");
+        }
+    }
+}
+// Should print "Access granted", but prints "Access denied"`,
+    task: 'The two strings clearly match, yet access is denied. Write the corrected if-line.',
+    answers: ['if (password.equals(input)) {', 'if (input.equals(password)) {', 'if (password.equals(input)){', 'if(password.equals(input)) {'],
+    hint: 'In Java, == on objects compares references, not contents.',
+  },
+  {
+    id: 'b005', language: 'java', title: 'Array Total',
+    code: `public class Sum {
+    public static void main(String[] args) {
+        int[] nums = {10, 20, 30, 40};
+        int total = 0;
+        for (int i = 0; i <= nums.length; i++) {    // <-- something wrong here
+            total += nums[i];
+        }
+        System.out.println(total);
+    }
+}
+// Should print 100, but CRASHES with ArrayIndexOutOfBoundsException`,
+    task: 'Fix the crash. Write the corrected for-loop line.',
+    answers: ['for (int i = 0; i < nums.length; i++) {', 'for(int i = 0; i < nums.length; i++) {', 'for (int i = 0; i < nums.length; i++){'],
+    hint: 'Valid indexes run from 0 to length − 1.',
+  },
+  {
+    id: 'b006', language: 'java', title: 'Rocket Countdown',
+    code: `public class Countdown {
+    public static void main(String[] args) {
+        int n = 5;
+        while (n > 0) {
+            System.out.println(n);
+            // <-- a line is MISSING here
+        }
+        System.out.println("Liftoff!");
+    }
+}
+// Should count 5..1 then print "Liftoff!", but loops forever printing 5`,
+    task: 'One line is missing inside the loop. Write that missing line.',
+    answers: ['n--;', 'n = n - 1;', 'n -= 1;', 'n--'],
+    hint: 'What ever changes n?',
+  },
+  {
+    id: 'b007', language: 'cpp', title: 'Secret Code',
+    code: `#include <iostream>
+using namespace std;
+int main() {
+    int code = 7;
+    if (code = 10) {    // <-- something wrong here
+        cout << "Locked";
+    } else {
+        cout << "Open";
+    }
+    return 0;
+}
+// code is 7, so it should print "Open" — but it always prints "Locked"`,
+    task: 'Write the corrected if-line.',
+    answers: ['if (code == 10) {', 'if(code == 10) {', 'if (code == 10){'],
+    hint: 'One of these is assignment, the other is comparison.',
+  },
+  {
+    id: 'b008', language: 'cpp', title: 'Factorial Machine',
+    code: `#include <iostream>
+using namespace std;
+int main() {
+    int n = 5;
+    int fact = 0;    // <-- something wrong here
+    for (int i = 1; i <= n; i++) {
+        fact = fact * i;
+    }
+    cout << fact;
+    return 0;
+}
+// Should print 120, but prints 0`,
+    task: 'Write the corrected declaration line.',
+    answers: ['int fact = 1;', 'int fact=1;'],
+    hint: 'Anything multiplied by the starting value stays that value.',
+  },
+];
+
+// ═════════════════════════════════════════════════════════════════
+// CODE ARENA — Mission 3 "Code Strike" problems
+// Three problems (Easy / Medium / Hard). Teams code in their own
+// editor and paste the final solution into the platform; the judge
+// panel scores correctness + efficiency, and the platform adds a
+// submission-time bonus automatically. `judge_notes` never leaves the
+// server except to admin sockets.
+// ═════════════════════════════════════════════════════════════════
+export const CODE_STRIKE_PROBLEMS = [
+  {
+    id: 'cs_easy', difficulty: 'easy', marks: 10, title: 'Vowel Census',
+    statement: `Given a single line of text, count how many vowels (a, e, i, o, u — case-insensitive) it contains.`,
+    input_format: 'One line containing a string S (may contain spaces).',
+    output_format: 'A single integer — the number of vowels in S.',
+    constraints: '1 <= length of S <= 1000',
+    samples: [
+      { input: 'Reboot Club', output: '4' },
+      { input: 'CODE ARENA 2026', output: '6' },
+    ],
+    judge_notes: 'Any language. Loop + membership check is enough. Watch for teams forgetting case-insensitivity (sample 2 catches it: O, E, A, E, A + none in 2026 = 6).',
+  },
+  {
+    id: 'cs_medium', difficulty: 'medium', marks: 15, title: 'Silver Medal',
+    statement: `Given a list of N scores, print the SECOND LARGEST DISTINCT score. If all scores are equal (no second distinct value exists), print -1.`,
+    input_format: 'First line: integer N. Second line: N space-separated integers.',
+    output_format: 'A single integer — the second largest distinct value, or -1.',
+    constraints: '2 <= N <= 100000, scores fit in a 32-bit int',
+    samples: [
+      { input: '5\n10 30 20 30 5', output: '20' },
+      { input: '3\n7 7 7', output: '-1' },
+    ],
+    judge_notes: 'Efficiency: sorting is fine at this N; a single pass tracking top-2 is the efficient answer. Duplicates of the max must not count as second largest (sample 1 catches it).',
+  },
+  {
+    id: 'cs_hard', difficulty: 'hard', marks: 25, title: 'Bracket Inspector',
+    statement: `A source file contains only bracket characters: ( ) [ ] { }. Determine whether the sequence is BALANCED — every opening bracket is closed by the same type in the correct order.`,
+    input_format: 'One line containing the bracket string B.',
+    output_format: 'Print YES if balanced, NO otherwise.',
+    constraints: '1 <= length of B <= 100000',
+    samples: [
+      { input: '{[()()]}', output: 'YES' },
+      { input: '([)]', output: 'NO' },
+      { input: '((()', output: 'NO' },
+    ],
+    judge_notes: 'Classic stack problem. Correct solutions must handle interleaving ([)] and unclosed openers ((() . O(n) with a stack is the efficient answer; nested replace() loops work but are O(n²) — score efficiency lower.',
+  },
+];
+
+// ═════════════════════════════════════════════════════════════════
+// CODE ARENA — Tie-breaker rapid-fire pool
+// Short factual questions with typed answers, graded by the lenient
+// matcher. First team to answer correctly wins the tie-break.
+// ═════════════════════════════════════════════════════════════════
+export const RAPID_FIRE_QUESTIONS = [
+  { id:'rf01', question:'What does HTTP stand for?', answers:['HyperText Transfer Protocol', 'Hyper Text Transfer Protocol'] },
+  { id:'rf02', question:'2 to the power 10 = ?', answer:'1024' },
+  { id:'rf03', question:'Which data structure is LIFO?', answer:'Stack' },
+  { id:'rf04', question:'Binary representation of decimal 5?', answer:'101' },
+  { id:'rf05', question:'What does API stand for?', answer:'Application Programming Interface' },
+  { id:'rf06', question:'Time complexity of binary search?', answers:['O(log n)', 'log n', 'O(logn)'] },
+  { id:'rf07', question:'Which SQL keyword sorts the result set?', answers:['ORDER BY', 'order by'] },
+  { id:'rf08', question:'Git command to upload your commits to the remote?', answers:['git push', 'push'] },
+  { id:'rf09', question:'HTML tag used to display an image?', answers:['<img>', 'img'] },
+  { id:'rf10', question:'Python keyword used to loop over a sequence?', answer:'for' },
+  { id:'rf11', question:'What does RAM stand for?', answer:'Random Access Memory' },
+  { id:'rf12', question:'Hexadecimal representation of decimal 255?', answers:['FF', '0xFF'] },
+  { id:'rf13', question:'Which operator gives the remainder in C?', answers:['%', 'modulus', 'mod'] },
+  { id:'rf14', question:'1 byte = how many bits?', answer:'8' },
+  { id:'rf15', question:'Which company originally developed Java?', answers:['Sun Microsystems', 'Sun'] },
+];

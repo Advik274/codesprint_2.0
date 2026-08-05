@@ -1,8 +1,8 @@
 import { v4 as uuid } from 'uuid';
-import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, computeReveal } from '../lib/scoring.js';
+import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, computeReveal, gradeBugHunt, calcCodeStrikeTotal } from '../lib/scoring.js';
 import { startBatteryDrain, stopBatteryDrain, pauseBatteryDrain, resumeBatteryDrain } from '../lib/battery.js';
-import { getRandomGauntletQuestion, getFiveZoneOptions, pickQuizQuestions } from '../lib/questions.js';
-import { buildClientState } from '../index.js';
+import { getRandomGauntletQuestion, getFiveZoneOptions, pickQuizQuestions, BUG_HUNT_PROGRAMS, CODE_STRIKE_PROBLEMS, RAPID_FIRE_QUESTIONS } from '../lib/questions.js';
+import { buildClientState, sanitizeQuestion } from '../index.js';
 import { authAdmin, authZone } from '../lib/auth.js';
 import { archiveEvent, snapshotNow } from '../lib/snapshots.js';
 import { isAnswerCorrect } from '../lib/utils.js';
@@ -590,6 +590,10 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
         zones_captured: 0, zone_ids_captured: [],
         phase1_scores: [], phase1_total_score: 0,
         phase3_submission: null, phase3_judge_scores: null, phase3_problem: null,
+        quiz_score: 0, quiz_member_scores: {}, quiz_marks_scored: null,
+        bughunt_submission: null, bughunt_results: null, bughunt_score: null,
+        codestrike_submissions: {}, codestrike_judge: null, codestrike_score: null,
+        tiebreak_wins: 0, violations: null,
       };
       db.teams.push(team);
       await saveDBNow(); // Critical: team registration must persist immediately
@@ -672,6 +676,26 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
         db.app_state.quiz_paused_remaining_ms = null;
         db.app_state.quiz_questions = [];
         db.app_state.quiz_member_answers = {};
+      }
+      if (phase === 'bug_hunt') {
+        stopBatteryDrain();
+        // Reset Bug Hunt state — admin explicitly starts it via admin:start_bughunt
+        db.app_state.bughunt_active = false;
+        db.app_state.bughunt_timer_end = null;
+        db.app_state.bughunt_paused = false;
+        db.app_state.bughunt_paused_remaining_ms = null;
+        db.app_state.bughunt_programs = [];
+      }
+      if (phase === 'code_strike') {
+        stopBatteryDrain();
+        // Reset Code Strike state — admin explicitly starts it via admin:start_codestrike
+        db.app_state.codestrike_active = false;
+        db.app_state.codestrike_timer_end = null;
+        db.app_state.codestrike_paused = false;
+        db.app_state.codestrike_paused_remaining_ms = null;
+        db.app_state.codestrike_problems = [];
+        db.app_state.codestrike_started_at = null;
+        db.app_state.codestrike_duration_ms = null;
       }
       if (phase === 'phase2') {
         db.app_state.phase2_timer_end = new Date(Date.now() + (db.app_state.event_config?.phase2_duration_min ?? 90) * 60 * 1000).toISOString();
@@ -1016,6 +1040,24 @@ startBatteryDrain(db, io, saveDB);
         db.app_state.phase1_round_active = false;
         db.app_state.phase1_paused_mid_round = true;
       }
+      // GAP FIX + CODE ARENA: the quiz timer was never frozen by Master
+      // Pause (only its own pause button did that) — and the new Bug Hunt
+      // / Code Strike timers need the same freeze treatment.
+      if (db.app_state.quiz_round_active && !db.app_state.quiz_paused && db.app_state.quiz_timer_end) {
+        db.app_state.quiz_paused_remaining_ms = Math.max(0, new Date(db.app_state.quiz_timer_end) - Date.now());
+        db.app_state.quiz_timer_end = null;
+        db.app_state.quiz_paused = true;
+      }
+      if (db.app_state.bughunt_active && !db.app_state.bughunt_paused && db.app_state.bughunt_timer_end) {
+        db.app_state.bughunt_paused_remaining_ms = Math.max(0, new Date(db.app_state.bughunt_timer_end) - Date.now());
+        db.app_state.bughunt_timer_end = null;
+        db.app_state.bughunt_paused = true;
+      }
+      if (db.app_state.codestrike_active && !db.app_state.codestrike_paused && db.app_state.codestrike_timer_end) {
+        db.app_state.codestrike_paused_remaining_ms = Math.max(0, new Date(db.app_state.codestrike_timer_end) - Date.now());
+        db.app_state.codestrike_timer_end = null;
+        db.app_state.codestrike_paused = true;
+      }
 
       saveDB();
       io.emit('state:delta', {
@@ -1027,6 +1069,12 @@ startBatteryDrain(db, io, saveDB);
         phase3_timer_end: db.app_state.phase3_timer_end,
         phase1_round_active: false,
         phase1_round_end: db.app_state.phase1_round_end,
+        quiz_paused: db.app_state.quiz_paused,
+        quiz_timer_end: db.app_state.quiz_timer_end,
+        bughunt_paused: db.app_state.bughunt_paused,
+        bughunt_timer_end: db.app_state.bughunt_timer_end,
+        codestrike_paused: db.app_state.codestrike_paused,
+        codestrike_timer_end: db.app_state.codestrike_timer_end,
       });
       io.emit('toast:broadcast', { message: `⏸ EVENT PAUSED: ${db.app_state.master_pause_reason}`, type: 'warning' });
       log(io, db, 'phase_change', `⏸ MASTER PAUSE: ${db.app_state.master_pause_reason}`);
@@ -1062,6 +1110,28 @@ startBatteryDrain(db, io, saveDB);
         db.app_state.phase1_paused_mid_round = false;
         db.app_state.phase1_round_active = true;
       }
+      // Counterpart to the master_pause freeze for quiz / Bug Hunt /
+      // Code Strike timers above.
+      if (phase === 'quiz_round' && db.app_state.quiz_paused && db.app_state.quiz_paused_remaining_ms) {
+        db.app_state.quiz_timer_end = new Date(Date.now() + db.app_state.quiz_paused_remaining_ms).toISOString();
+        db.app_state.quiz_paused_remaining_ms = null;
+        db.app_state.quiz_paused = false;
+      }
+      if (phase === 'bug_hunt' && db.app_state.bughunt_paused && db.app_state.bughunt_paused_remaining_ms) {
+        db.app_state.bughunt_timer_end = new Date(Date.now() + db.app_state.bughunt_paused_remaining_ms).toISOString();
+        db.app_state.bughunt_paused_remaining_ms = null;
+        db.app_state.bughunt_paused = false;
+      }
+      if (phase === 'code_strike' && db.app_state.codestrike_paused && db.app_state.codestrike_paused_remaining_ms) {
+        db.app_state.codestrike_timer_end = new Date(Date.now() + db.app_state.codestrike_paused_remaining_ms).toISOString();
+        db.app_state.codestrike_paused_remaining_ms = null;
+        db.app_state.codestrike_paused = false;
+        // Shift the time-bonus baseline by the pause length so a pause
+        // doesn't eat into every team's submission-time bonus.
+        if (db.app_state.codestrike_duration_ms) {
+          db.app_state.codestrike_started_at = new Date(new Date(db.app_state.codestrike_timer_end).getTime() - db.app_state.codestrike_duration_ms).toISOString();
+        }
+      }
 
       saveDB();
       io.emit('state:delta', {
@@ -1072,6 +1142,12 @@ startBatteryDrain(db, io, saveDB);
         phase3_timer_end: db.app_state.phase3_timer_end,
         phase1_round_active: db.app_state.phase1_round_active,
         phase1_round_end: db.app_state.phase1_round_end,
+        quiz_paused: db.app_state.quiz_paused,
+        quiz_timer_end: db.app_state.quiz_timer_end,
+        bughunt_paused: db.app_state.bughunt_paused,
+        bughunt_timer_end: db.app_state.bughunt_timer_end,
+        codestrike_paused: db.app_state.codestrike_paused,
+        codestrike_timer_end: db.app_state.codestrike_timer_end,
       });
       io.emit('toast:broadcast', { message: '▶️ EVENT RESUMED — continue!', type: 'success' });
       log(io, db, 'phase_change', '▶️ MASTER RESUME');
@@ -1099,6 +1175,17 @@ startBatteryDrain(db, io, saveDB);
         app_state: {
           current_phase: 'setup',
           phase1_round: 0, phase1_round_active: false, current_question: null,
+          phase1_round_end: null, phase1_paused_mid_round: false, phase1_paused_remaining_ms: null,
+          // GAP FIX: quiz state was missing from the factory-reset shape
+          quiz_round_active: false, quiz_timer_end: null, quiz_paused: false,
+          quiz_paused_remaining_ms: null, quiz_questions: [], quiz_member_answers: {},
+          // CODE ARENA: mission state
+          bughunt_active: false, bughunt_timer_end: null, bughunt_paused: false,
+          bughunt_paused_remaining_ms: null, bughunt_programs: [],
+          codestrike_active: false, codestrike_timer_end: null, codestrike_paused: false,
+          codestrike_paused_remaining_ms: null, codestrike_problems: [],
+          codestrike_started_at: null, codestrike_duration_ms: null,
+          tiebreak: null,
           phase2_paused: false, phase2_timer_end: null, phase2_paused_remaining_ms: null,
           phase3_timer_end: null, phase3_paused: false, phase3_paused_remaining_ms: null,
           battery_drain_interval_ms: 60000, battery_drain_percent_per_tick: 2,
@@ -1222,6 +1309,22 @@ startBatteryDrain(db, io, saveDB);
         speed_demo_duration_sec: Math.max(30, Math.min(300, parseInt(config.speed_demo_duration_sec) || 90)),
         audience_weight_percent: Math.max(0, Math.min(30, parseInt(config.audience_weight_percent) || 10)),
         reveal_top_n: Math.max(0, Math.min(200, parseInt(config.reveal_top_n) || 0)),
+        // CODE ARENA: mission settings — must be rebuilt here or every
+        // config save would silently reset them (same bug class as the
+        // quiz_num_questions fix above).
+        quiz_question_source: ['dsa', 'arena', 'both'].includes(config.quiz_question_source) ? config.quiz_question_source : 'dsa',
+        quiz_marks: Math.max(1, Math.min(100, parseInt(config.quiz_marks) || 20)),
+        bughunt_duration_min: Math.max(5, Math.min(120, parseInt(config.bughunt_duration_min) || 30)),
+        bughunt_marks: Math.max(1, Math.min(100, parseInt(config.bughunt_marks) || 30)),
+        bughunt_num_programs: Math.max(1, Math.min(8, parseInt(config.bughunt_num_programs) || 5)),
+        codestrike_duration_min: Math.max(10, Math.min(180, parseInt(config.codestrike_duration_min) || 45)),
+        codestrike_marks: Math.max(1, Math.min(100, parseInt(config.codestrike_marks) || 50)),
+        // Protected Mode is toggled live from the Setup tab (its own event),
+        // so a config save must preserve it rather than reset it.
+        protected_mode: config.protected_mode !== undefined ? !!config.protected_mode : !!db.app_state.event_config?.protected_mode,
+        // Custom theme is set live from the Theme tab (its own event) —
+        // preserve it across config saves too.
+        theme: db.app_state.event_config?.theme ?? null,
         // BUG FIX: custom_questions wasn't included here either — every
         // config save silently deleted every custom question the admin
         // had added, with no warning.
@@ -1351,7 +1454,9 @@ startBatteryDrain(db, io, saveDB);
       // showing up as 48 after 2 gauntlet rounds had already run). The
       // quiz round is a separate assessment; it should draw from the full
       // pool regardless of what Phase 1 already used.
-      const questions = pickQuizQuestions(n, [], customQ);
+      // CODE ARENA: the quiz can draw from the original DSA pool, the
+      // multi-topic arena pool, or both — admin picks in Config.
+      const questions = pickQuizQuestions(n, [], customQ, cfg.quiz_question_source || 'dsa');
       db.app_state.quiz_questions = questions;
       db.app_state.quiz_member_answers = {};
       db.app_state.quiz_round_active = true;
@@ -1359,9 +1464,13 @@ startBatteryDrain(db, io, saveDB);
       db.app_state.quiz_paused_remaining_ms = null;
       db.app_state.quiz_timer_end = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
       await saveDBNow();
-      // Send questions + timer to all clients
+      // SECURITY FIX: this used to broadcast the full question objects —
+      // including every correct answer — to every connected socket. Teams
+      // only ever need the answer-stripped versions; grading happens
+      // server-side against db.app_state.quiz_questions.
+      const safeQuestions = questions.map(sanitizeQuestion);
       io.emit('quiz:started', {
-        questions,
+        questions: safeQuestions,
         timer_end: db.app_state.quiz_timer_end,
         duration_min: durationMin,
       });
@@ -1370,8 +1479,10 @@ startBatteryDrain(db, io, saveDB);
         quiz_timer_end: db.app_state.quiz_timer_end,
         quiz_paused: false,
         quiz_paused_remaining_ms: null,
-        quiz_questions: questions,
+        quiz_questions: safeQuestions,
       });
+      // Full questions (with answers) only to the admin socket that started it
+      socket.emit('admin:state_delta', { quiz_questions: questions });
       log(io, db, 'quiz', `Quiz round started — ${questions.length} questions, ${durationMin} min`);
     });
 
@@ -1401,12 +1512,18 @@ startBatteryDrain(db, io, saveDB);
         const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
         team.quiz_score = avgScore;
         team.quiz_member_scores = memberScoreMap;
+        // CODE ARENA: also store the quiz result normalised to the
+        // mission's configured marks (default /20) so the combined
+        // leaderboard can sum missions directly.
+        const maxPoints = questions.reduce((a, q) => a + (q.points || 10), 0) || 1;
+        const quizMarks = db.app_state.event_config?.quiz_marks ?? 20;
+        team.quiz_marks_scored = Math.round((avgScore / maxPoints) * quizMarks * 10) / 10;
         teamScores[team.id] = avgScore;
       });
       await saveDBNow();
       // BUG FIX 3: emit team deltas so client team objects update with quiz_score immediately
       db.teams.filter(t => !t.is_eliminated).forEach(t => {
-        emitTeamDelta(io, t, ['quiz_score', 'quiz_member_scores']);
+        emitTeamDelta(io, t, ['quiz_score', 'quiz_member_scores', 'quiz_marks_scored']);
       });
       io.emit('quiz:ended', { team_scores: teamScores });
       emitStateDelta(io, { quiz_round_active: false });
@@ -1572,6 +1689,513 @@ startBatteryDrain(db, io, saveDB);
       saveDB();
       socket.emit('admin:problem_assigned', { target: 'group', group_label, count });
       log(io, db, 'phase3', `Phase 3 problem assigned to ${group_label || 'group'} (${count} teams)`);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // CODE ARENA — Mission 2: Bug Hunt
+    // Same lifecycle shape as the quiz round: admin starts/ends it
+    // explicitly inside the bug_hunt phase; teams submit once (one
+    // laptop per team); grading is automatic with admin override.
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('admin:start_bughunt', async ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (db.app_state.current_phase !== 'bug_hunt') return;
+      const cfg = db.app_state.event_config;
+      const n = Math.min(cfg.bughunt_num_programs || 5, BUG_HUNT_PROGRAMS.length);
+      const durationMin = cfg.bughunt_duration_min || 30;
+      // Same set for every team — shuffle the pool once, take N
+      const shuffled = [...BUG_HUNT_PROGRAMS].sort(() => Math.random() - 0.5);
+      const programs = shuffled.slice(0, n);
+      db.app_state.bughunt_programs = programs; // full, incl. answers — sanitized on the way out
+      db.app_state.bughunt_active = true;
+      db.app_state.bughunt_paused = false;
+      db.app_state.bughunt_paused_remaining_ms = null;
+      db.app_state.bughunt_timer_end = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
+      // Clear any leftovers from a previous run of this mission
+      db.teams.forEach(t => { t.bughunt_submission = null; t.bughunt_results = null; t.bughunt_score = null; });
+      await saveDBNow();
+      const safePrograms = programs.map(sanitizeQuestion);
+      io.emit('bughunt:started', {
+        programs: safePrograms,
+        timer_end: db.app_state.bughunt_timer_end,
+        duration_min: durationMin,
+      });
+      emitStateDelta(io, {
+        bughunt_active: true,
+        bughunt_timer_end: db.app_state.bughunt_timer_end,
+        bughunt_paused: false,
+        bughunt_paused_remaining_ms: null,
+        bughunt_programs: safePrograms,
+      });
+      // Full programs (with expected fixes) only to the starting admin
+      socket.emit('admin:state_delta', { bughunt_programs: programs });
+      db.teams.forEach(t => {
+        io.emit('team:delta', { id: t.id, bughunt_score: null, bughunt_submitted_at: null, bughunt_per_program: null });
+      });
+      log(io, db, 'bughunt', `🐛 Bug Hunt started — ${programs.length} programs, ${durationMin} min`);
+    });
+
+    // Team submits its fixes — one submission per team, locked once in
+    socket.on('bughunt:submit', ({ answers }) => {
+      if (!rateLimit(socket.id, 'bughunt:submit', 3000)) return;
+      if (!db.app_state.bughunt_active) {
+        socket.emit('bughunt:submit_result', { ok: false, message: 'Bug Hunt is not accepting submissions right now.' });
+        return;
+      }
+      if (db.app_state.master_paused || db.app_state.bughunt_paused) {
+        socket.emit('bughunt:submit_result', { ok: false, message: '⏸ Bug Hunt is paused — hold on.' });
+        return;
+      }
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
+      if (!team || team.is_eliminated) return;
+      if (team.bughunt_submission) {
+        // Already in — most likely a resend after reconnect
+        socket.emit('bughunt:submit_result', { ok: true, already_submitted: true, submitted_at: team.bughunt_submission.submitted_at });
+        return;
+      }
+      const validIds = new Set((db.app_state.bughunt_programs || []).map(p => p.id));
+      const cleanAnswers = {};
+      Object.entries(answers || {}).forEach(([pid, text]) => {
+        if (validIds.has(pid)) cleanAnswers[pid] = String(text ?? '').slice(0, 500);
+      });
+      team.bughunt_submission = { answers: cleanAnswers, submitted_at: new Date().toISOString() };
+      saveDB();
+      socket.emit('bughunt:submit_result', { ok: true, submitted_at: team.bughunt_submission.submitted_at, count: Object.keys(cleanAnswers).length });
+      io.emit('team:delta', { id: team.id, bughunt_submitted_at: team.bughunt_submission.submitted_at });
+      io.emit('toast:broadcast', { message: `🐛 ${team.name} submitted their Bug Hunt fixes!`, type: 'success' });
+      log(io, db, 'bughunt', `🐛 ${team.name} submitted (${Object.keys(cleanAnswers).length} fixes)`, team.id);
+    });
+
+    socket.on('admin:end_bughunt', async ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (db.app_state.current_phase !== 'bug_hunt') return;
+      db.app_state.bughunt_active = false;
+      const programs = db.app_state.bughunt_programs || [];
+      const totalMarks = db.app_state.event_config?.bughunt_marks ?? 30;
+      db.teams.filter(t => !t.is_eliminated).forEach(team => {
+        const answers = team.bughunt_submission?.answers || {};
+        const overrides = team.bughunt_results?.overrides || {};
+        const graded = gradeBugHunt(answers, programs, totalMarks, overrides);
+        team.bughunt_results = { ...graded, overrides };
+        team.bughunt_score = graded.score;
+      });
+      await saveDBNow();
+      db.teams.filter(t => !t.is_eliminated).forEach(t => {
+        io.emit('team:delta', { id: t.id, bughunt_score: t.bughunt_score, bughunt_per_program: t.bughunt_results?.per_program || null });
+      });
+      emitStateDelta(io, { bughunt_active: false });
+      io.emit('bughunt:ended', {
+        team_scores: Object.fromEntries(db.teams.filter(t => !t.is_eliminated).map(t => [t.id, t.bughunt_score])),
+      });
+      log(io, db, 'bughunt', '🐛 Bug Hunt ended — fixes auto-graded');
+    });
+
+    // Admin override: award marks for a valid fix the matcher didn't accept
+    socket.on('admin:bughunt_override', ({ team_id, program_id, marks, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team || !team.bughunt_results) return;
+      const programs = db.app_state.bughunt_programs || [];
+      if (!programs.find(p => p.id === program_id)) return;
+      const totalMarks = db.app_state.event_config?.bughunt_marks ?? 30;
+      const overrides = { ...(team.bughunt_results.overrides || {}) };
+      if (marks === null || marks === undefined || marks === '') delete overrides[program_id];
+      else overrides[program_id] = Number(marks);
+      const graded = gradeBugHunt(team.bughunt_submission?.answers || {}, programs, totalMarks, overrides);
+      team.bughunt_results = { ...graded, overrides };
+      team.bughunt_score = graded.score;
+      saveDB();
+      io.emit('team:delta', { id: team.id, bughunt_score: team.bughunt_score, bughunt_per_program: graded.per_program });
+      socket.emit('admin:bughunt_override_saved', { team_id, program_id, score: team.bughunt_score });
+      log(io, db, 'bughunt', `Override: ${team.name} / ${program_id} → ${overrides[program_id] ?? 'auto'}`);
+    });
+
+    // Pull-only review data for the admin panel: every team's typed
+    // fixes next to the expected answers — never broadcast.
+    socket.on('admin:request_bughunt_review', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      socket.emit('admin:bughunt_review', {
+        programs: db.app_state.bughunt_programs || [],
+        teams: db.teams.filter(t => !t.is_eliminated).map(t => ({
+          team_id: t.id, team_name: t.name, color: t.color,
+          submission: t.bughunt_submission,
+          results: t.bughunt_results,
+          score: t.bughunt_score,
+        })),
+      });
+    });
+
+    socket.on('admin:pause_bughunt', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (!db.app_state.bughunt_active || db.app_state.bughunt_paused) return;
+      db.app_state.bughunt_paused = true;
+      db.app_state.bughunt_paused_remaining_ms = Math.max(0, new Date(db.app_state.bughunt_timer_end).getTime() - Date.now());
+      db.app_state.bughunt_timer_end = null;
+      saveDB();
+      emitStateDelta(io, { bughunt_paused: true, bughunt_paused_remaining_ms: db.app_state.bughunt_paused_remaining_ms, bughunt_timer_end: null });
+      log(io, db, 'bughunt', 'Bug Hunt paused');
+    });
+
+    socket.on('admin:resume_bughunt', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (!db.app_state.bughunt_paused) return;
+      const remaining = db.app_state.bughunt_paused_remaining_ms || 0;
+      db.app_state.bughunt_timer_end = new Date(Date.now() + remaining).toISOString();
+      db.app_state.bughunt_paused = false;
+      db.app_state.bughunt_paused_remaining_ms = null;
+      saveDB();
+      emitStateDelta(io, { bughunt_paused: false, bughunt_paused_remaining_ms: null, bughunt_timer_end: db.app_state.bughunt_timer_end });
+      log(io, db, 'bughunt', 'Bug Hunt resumed');
+    });
+
+    socket.on('admin:adjust_bughunt_timer', ({ delta_min, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const deltaMs = (parseInt(delta_min) || 0) * 60 * 1000;
+      if (db.app_state.bughunt_paused && db.app_state.bughunt_paused_remaining_ms !== null) {
+        db.app_state.bughunt_paused_remaining_ms = Math.max(0, db.app_state.bughunt_paused_remaining_ms + deltaMs);
+        emitStateDelta(io, { bughunt_paused_remaining_ms: db.app_state.bughunt_paused_remaining_ms });
+      } else if (db.app_state.bughunt_timer_end) {
+        db.app_state.bughunt_timer_end = new Date(new Date(db.app_state.bughunt_timer_end).getTime() + deltaMs).toISOString();
+        emitStateDelta(io, { bughunt_timer_end: db.app_state.bughunt_timer_end });
+      }
+      saveDB();
+      io.emit('toast:broadcast', { message: `${delta_min > 0 ? '+' : ''}${delta_min} min added to Bug Hunt timer`, type: 'info' });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // CODE ARENA — Mission 3: Code Strike
+    // Problems revealed on start; teams paste final code per problem
+    // (resubmit allowed until the mission ends — last paste counts and
+    // sets the submission time). Judges score correctness/efficiency;
+    // the time bonus is computed server-side.
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('admin:start_codestrike', async ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (db.app_state.current_phase !== 'code_strike') return;
+      const cfg = db.app_state.event_config;
+      const durationMin = cfg.codestrike_duration_min || 45;
+      const problems = CODE_STRIKE_PROBLEMS;
+      db.app_state.codestrike_problems = problems;
+      db.app_state.codestrike_active = true;
+      db.app_state.codestrike_paused = false;
+      db.app_state.codestrike_paused_remaining_ms = null;
+      db.app_state.codestrike_started_at = new Date().toISOString();
+      db.app_state.codestrike_duration_ms = durationMin * 60 * 1000;
+      db.app_state.codestrike_timer_end = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
+      db.teams.forEach(t => { t.codestrike_submissions = {}; t.codestrike_judge = null; t.codestrike_score = null; });
+      await saveDBNow();
+      const safeProblems = problems.map(sanitizeQuestion);
+      io.emit('codestrike:started', {
+        problems: safeProblems,
+        timer_end: db.app_state.codestrike_timer_end,
+        duration_min: durationMin,
+      });
+      emitStateDelta(io, {
+        codestrike_active: true,
+        codestrike_timer_end: db.app_state.codestrike_timer_end,
+        codestrike_paused: false,
+        codestrike_paused_remaining_ms: null,
+        codestrike_problems: safeProblems,
+        codestrike_started_at: db.app_state.codestrike_started_at,
+        codestrike_duration_ms: db.app_state.codestrike_duration_ms,
+      });
+      socket.emit('admin:state_delta', { codestrike_problems: problems });
+      db.teams.forEach(t => {
+        io.emit('team:delta', { id: t.id, codestrike_score: null, codestrike_submitted: {} });
+      });
+      log(io, db, 'codestrike', `⚔️ Code Strike started — ${problems.length} problems, ${durationMin} min`);
+    });
+
+    socket.on('codestrike:submit_code', ({ problem_id, code, language }) => {
+      if (!rateLimit(socket.id, 'codestrike:submit', 2000)) return;
+      if (!db.app_state.codestrike_active) {
+        socket.emit('codestrike:submit_result', { ok: false, message: 'Code Strike is not accepting submissions right now.' });
+        return;
+      }
+      if (db.app_state.master_paused || db.app_state.codestrike_paused) {
+        socket.emit('codestrike:submit_result', { ok: false, message: '⏸ Code Strike is paused — hold on.' });
+        return;
+      }
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
+      if (!team || team.is_eliminated) return;
+      const problem = (db.app_state.codestrike_problems || []).find(p => p.id === problem_id);
+      if (!problem) { socket.emit('codestrike:submit_result', { ok: false, message: 'Unknown problem.' }); return; }
+      const cleanCode = String(code ?? '').slice(0, 20000);
+      if (!cleanCode.trim()) { socket.emit('codestrike:submit_result', { ok: false, message: 'Code is empty.' }); return; }
+      if (!team.codestrike_submissions) team.codestrike_submissions = {};
+      const prev = team.codestrike_submissions[problem_id];
+      team.codestrike_submissions[problem_id] = {
+        code: cleanCode,
+        language: String(language || '').slice(0, 20),
+        submitted_at: new Date().toISOString(),
+        resubmits: (prev?.resubmits || 0) + (prev ? 1 : 0),
+      };
+      saveDB();
+      const submitted = Object.fromEntries(
+        Object.entries(team.codestrike_submissions).map(([pid, sub]) => [pid, sub.submitted_at])
+      );
+      socket.emit('codestrike:submit_result', { ok: true, problem_id, submitted_at: team.codestrike_submissions[problem_id].submitted_at, resubmit: !!prev });
+      io.emit('team:delta', { id: team.id, codestrike_submitted: submitted });
+      if (!prev) io.emit('toast:broadcast', { message: `⚔️ ${team.name} submitted "${problem.title}"!`, type: 'success' });
+      log(io, db, 'codestrike', `⚔️ ${team.name} ${prev ? 're-submitted' : 'submitted'} ${problem.title}`, team.id);
+    });
+
+    socket.on('admin:end_codestrike', async ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (db.app_state.current_phase !== 'code_strike') return;
+      db.app_state.codestrike_active = false;
+      await saveDBNow();
+      emitStateDelta(io, { codestrike_active: false });
+      io.emit('codestrike:ended', {});
+      io.emit('toast:broadcast', { message: '⚔️ Code Strike over — pencils down! Judging begins.', type: 'warning' });
+      log(io, db, 'codestrike', '⚔️ Code Strike ended — submissions locked');
+    });
+
+    // Judge scores one team on one problem; total recomputes immediately
+    socket.on('admin:judge_codestrike', ({ team_id, problem_id, correctness, efficiency, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team) return;
+      const problems = db.app_state.codestrike_problems || [];
+      if (!problems.find(p => p.id === problem_id)) return;
+      if (!team.codestrike_judge) team.codestrike_judge = {};
+      team.codestrike_judge[problem_id] = {
+        correctness: Math.max(0, Math.min(10, Number(correctness) || 0)),
+        efficiency: Math.max(0, Math.min(10, Number(efficiency) || 0)),
+      };
+      team.codestrike_score = calcCodeStrikeTotal(
+        team, problems,
+        db.app_state.codestrike_started_at, db.app_state.codestrike_duration_ms,
+        db.app_state.event_config?.codestrike_marks ?? 50
+      );
+      saveDB();
+      io.emit('team:delta', { id: team.id, codestrike_score: team.codestrike_score });
+      socket.emit('admin:codestrike_judged', { team_id, problem_id, score: team.codestrike_score });
+      log(io, db, 'codestrike', `Judged ${team.name} / ${problem_id}: C${correctness} E${efficiency} → ${team.codestrike_score}`);
+    });
+
+    // Pull-only: full pasted code per team per problem for the judge panel
+    socket.on('admin:request_codestrike_submissions', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      socket.emit('admin:codestrike_submissions', {
+        problems: db.app_state.codestrike_problems || [],
+        started_at: db.app_state.codestrike_started_at,
+        duration_ms: db.app_state.codestrike_duration_ms,
+        teams: db.teams.filter(t => !t.is_eliminated).map(t => ({
+          team_id: t.id, team_name: t.name, color: t.color,
+          submissions: t.codestrike_submissions || {},
+          judge: t.codestrike_judge,
+          score: t.codestrike_score,
+        })),
+      });
+    });
+
+    socket.on('admin:pause_codestrike', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (!db.app_state.codestrike_active || db.app_state.codestrike_paused) return;
+      db.app_state.codestrike_paused = true;
+      db.app_state.codestrike_paused_remaining_ms = Math.max(0, new Date(db.app_state.codestrike_timer_end).getTime() - Date.now());
+      db.app_state.codestrike_timer_end = null;
+      saveDB();
+      emitStateDelta(io, { codestrike_paused: true, codestrike_paused_remaining_ms: db.app_state.codestrike_paused_remaining_ms, codestrike_timer_end: null });
+      log(io, db, 'codestrike', 'Code Strike paused');
+    });
+
+    socket.on('admin:resume_codestrike', ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (!db.app_state.codestrike_paused) return;
+      const remaining = db.app_state.codestrike_paused_remaining_ms || 0;
+      db.app_state.codestrike_timer_end = new Date(Date.now() + remaining).toISOString();
+      db.app_state.codestrike_paused = false;
+      db.app_state.codestrike_paused_remaining_ms = null;
+      // Shift the time-bonus baseline by the pause length so paused time
+      // doesn't count against any team's submission-time bonus.
+      if (db.app_state.codestrike_duration_ms) {
+        db.app_state.codestrike_started_at = new Date(new Date(db.app_state.codestrike_timer_end).getTime() - db.app_state.codestrike_duration_ms).toISOString();
+      }
+      saveDB();
+      emitStateDelta(io, { codestrike_paused: false, codestrike_paused_remaining_ms: null, codestrike_timer_end: db.app_state.codestrike_timer_end, codestrike_started_at: db.app_state.codestrike_started_at });
+      log(io, db, 'codestrike', 'Code Strike resumed');
+    });
+
+    socket.on('admin:adjust_codestrike_timer', ({ delta_min, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const deltaMs = (parseInt(delta_min) || 0) * 60 * 1000;
+      if (db.app_state.codestrike_paused && db.app_state.codestrike_paused_remaining_ms !== null) {
+        db.app_state.codestrike_paused_remaining_ms = Math.max(0, db.app_state.codestrike_paused_remaining_ms + deltaMs);
+        emitStateDelta(io, { codestrike_paused_remaining_ms: db.app_state.codestrike_paused_remaining_ms });
+      } else if (db.app_state.codestrike_timer_end) {
+        db.app_state.codestrike_timer_end = new Date(new Date(db.app_state.codestrike_timer_end).getTime() + deltaMs).toISOString();
+        emitStateDelta(io, { codestrike_timer_end: db.app_state.codestrike_timer_end });
+      }
+      saveDB();
+      io.emit('toast:broadcast', { message: `${delta_min > 0 ? '+' : ''}${delta_min} min added to Code Strike timer`, type: 'info' });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // CODE ARENA — Tie-breaker (rapid fire, fastest correct wins)
+    // Admin picks the tied teams and fires one question at them; the
+    // server timestamps answers, first correct locks the win.
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('admin:start_tiebreak', async ({ team_ids, custom_question, custom_answer, admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (!Array.isArray(team_ids) || team_ids.length < 2) {
+        socket.emit('admin:error', { message: 'Pick at least 2 teams for a tie-break.' }); return;
+      }
+      const validIds = team_ids.filter(id => db.teams.find(t => t.id === id && !t.is_eliminated));
+      if (validIds.length < 2) {
+        socket.emit('admin:error', { message: 'Need at least 2 active (non-eliminated) teams.' }); return;
+      }
+      let question;
+      if (custom_question?.trim() && custom_answer?.trim()) {
+        question = { id: `tb_custom_${Date.now()}`, question: custom_question.trim(), answer: custom_answer.trim() };
+      } else {
+        const usedIds = (db.app_state.tiebreak_used_rf_ids ||= []);
+        const pool = RAPID_FIRE_QUESTIONS.filter(q => !usedIds.includes(q.id));
+        const source = pool.length ? pool : RAPID_FIRE_QUESTIONS;
+        question = source[Math.floor(Math.random() * source.length)];
+        if (!usedIds.includes(question.id)) usedIds.push(question.id);
+      }
+      db.app_state.tiebreak = {
+        active: true,
+        team_ids: validIds,
+        question, // full, incl. answer — sanitized on the way out
+        started_at: new Date().toISOString(),
+        winner: null,
+        answers: [],
+      };
+      await saveDBNow();
+      const safeTiebreak = { ...db.app_state.tiebreak, question: sanitizeQuestion(question) };
+      io.emit('tiebreak:started', safeTiebreak);
+      emitStateDelta(io, { tiebreak: safeTiebreak });
+      socket.emit('admin:state_delta', { tiebreak: db.app_state.tiebreak });
+      const names = validIds.map(id => db.teams.find(t => t.id === id)?.name).join(' vs ');
+      io.emit('toast:broadcast', { message: `⚡ TIE-BREAKER: ${names} — fastest correct answer wins!`, type: 'warning' });
+      log(io, db, 'tiebreak', `⚡ Tie-break started: ${names}`);
+    });
+
+    socket.on('tiebreak:answer', ({ answer }) => {
+      if (!rateLimit(socket.id, 'tiebreak:answer', 1000)) return;
+      const tb = db.app_state.tiebreak;
+      if (!tb?.active || tb.winner) return;
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
+      if (!team || !tb.team_ids.includes(team_id)) return;
+      if (tb.answers.find(a => a.team_id === team_id)) return; // one shot per team
+      const correct = isAnswerCorrect(answer, tb.question);
+      const time_ms = Date.now() - new Date(tb.started_at).getTime();
+      const entry = { team_id, team_name: team.name, color: team.color, correct, time_ms };
+      tb.answers.push(entry);
+      if (correct) {
+        tb.winner = entry;
+        tb.active = false;
+        team.tiebreak_wins = (team.tiebreak_wins || 0) + 1;
+        io.emit('team:delta', { id: team.id, tiebreak_wins: team.tiebreak_wins });
+        io.emit('toast:broadcast', { message: `🏆 ${team.name} wins the tie-break in ${(time_ms / 1000).toFixed(1)}s!`, type: 'success' });
+        log(io, db, 'tiebreak', `🏆 ${team.name} won the tie-break (${(time_ms / 1000).toFixed(1)}s)`, team.id);
+      } else {
+        log(io, db, 'tiebreak', `❌ ${team.name} answered wrong on the tie-break`, team.id);
+      }
+      saveDB();
+      const safeTiebreak = { ...tb, question: sanitizeQuestion(tb.question) };
+      io.emit('tiebreak:update', safeTiebreak);
+      emitStateDelta(io, { tiebreak: safeTiebreak });
+      socket.emit('tiebreak:answer_result', { correct, time_ms, winner: !!(correct && tb.winner?.team_id === team_id) });
+    });
+
+    socket.on('admin:end_tiebreak', async ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      if (!db.app_state.tiebreak) return;
+      db.app_state.tiebreak = null;
+      await saveDBNow();
+      emitStateDelta(io, { tiebreak: null });
+      io.emit('tiebreak:cleared', {});
+      log(io, db, 'tiebreak', 'Tie-break cleared');
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // PROTECTED MODE — admin toggle + team violation reports
+    // A browser can't physically stop a team opening another tab or an
+    // AI on a second device — what it CAN do is block copy/paste and
+    // right-click in the event page and report every tab/app switch the
+    // moment it happens. Enforced during quiz, Bug Hunt, and tie-breaks;
+    // Code Strike is deliberately exempt (teams must switch to their
+    // own editor there). Admin sees a live violation counter per team
+    // and applies penalties with the existing tools.
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('admin:set_protected_mode', async ({ enabled, admin_token }) => {
+      if (!auth(admin_token)) return;
+      db.app_state.event_config.protected_mode = !!enabled;
+      await saveDBNow();
+      emitStateDelta(io, { event_config: db.app_state.event_config });
+      io.emit('toast:broadcast', {
+        message: enabled
+          ? '🔒 PROTECTED MODE ON — tab switches & copy/paste are recorded during timed rounds'
+          : '🔓 Protected Mode off',
+        type: enabled ? 'warning' : 'info',
+      });
+      log(io, db, 'config', enabled ? '🔒 Protected Mode enabled' : '🔓 Protected Mode disabled');
+    });
+
+    // Team browser reports a violation (tab switch / blocked copy-paste).
+    // Server-side gate mirrors the client's enforcement window so stray or
+    // spoofed reports outside a live round count for nothing.
+    socket.on('team:violation', ({ vtype }) => {
+      if (!rateLimit(socket.id, 'team:violation', 2000)) return;
+      if (!db.app_state.event_config?.protected_mode) return;
+      const enforced = db.app_state.quiz_round_active
+        || db.app_state.bughunt_active
+        || !!db.app_state.tiebreak?.active;
+      if (!enforced) return;
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
+      if (!team || team.is_eliminated) return;
+      const type = ['tab_switch', 'copy_paste'].includes(vtype) ? vtype : 'tab_switch';
+      if (!team.violations) team.violations = { total: 0, tab_switch: 0, copy_paste: 0, last_at: null };
+      team.violations.total += 1;
+      team.violations[type] = (team.violations[type] || 0) + 1;
+      team.violations.last_at = new Date().toISOString();
+      saveDB();
+      io.emit('team:delta', { id: team.id, violations: team.violations });
+      const label = type === 'tab_switch' ? 'left the event tab' : 'tried to copy/paste';
+      io.emit('toast:broadcast', { message: `🚨 ${team.name} ${label} (violation #${team.violations.total})`, type: 'danger' });
+      log(io, db, 'violation', `🚨 ${team.name} ${label} — violation #${team.violations.total}`, team.id);
+      socket.emit('team:violation_recorded', { total: team.violations.total, type });
+    });
+
+    // ── CUSTOM EVENT THEME ─────────────────────────────────────────
+    // Admin picks the palette in the Theme tab; it lives in event_config
+    // so every screen (teams, spectator, zone laptops) re-themes live.
+    // null = the stock palette from the stylesheet.
+    socket.on('admin:set_theme', async ({ theme, admin_token }) => {
+      if (!auth(admin_token)) return;
+      let clean = null;
+      if (theme && typeof theme === 'object') {
+        clean = {};
+        ['accent', 'danger', 'warning', 'info', 'purple', 'bg'].forEach(k => {
+          if (typeof theme[k] === 'string' && /^#[0-9a-f]{6}$/i.test(theme[k])) clean[k] = theme[k].toLowerCase();
+        });
+        if (Object.keys(clean).length === 0) clean = null;
+      }
+      db.app_state.event_config.theme = clean;
+      await saveDBNow();
+      emitStateDelta(io, { event_config: db.app_state.event_config });
+      io.emit('toast:broadcast', { message: clean ? '🎨 Event theme updated' : '🎨 Theme reset to default', type: 'info' });
+      log(io, db, 'config', clean ? `🎨 Custom theme applied (${Object.keys(clean).join(', ')})` : '🎨 Theme reset to default');
+    });
+
+    // Admin can reset a team's counter (e.g. after a warning or a
+    // confirmed false positive like an accidental OS notification tap)
+    socket.on('admin:clear_violations', ({ team_id, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team) return;
+      team.violations = null;
+      saveDB();
+      io.emit('team:delta', { id: team.id, violations: null });
+      log(io, db, 'violation', `Violations cleared for ${team.name}`);
     });
   });
 }

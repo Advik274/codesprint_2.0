@@ -211,7 +211,7 @@ export function QuizRound({ teamId, state }) {
         {['all', 'unanswered'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
             padding: '6px 14px', borderRadius: 4, fontSize: 12,
-            background: filter === f ? 'rgba(0,255,136,0.12)' : 'var(--bg3)',
+            background: filter === f ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'var(--bg3)',
             border: `1px solid ${filter === f ? 'var(--accent)' : 'var(--border)'}`,
             color: filter === f ? 'var(--accent)' : 'var(--text3)',
             fontFamily: 'var(--font-mono)', cursor: 'pointer',
@@ -229,8 +229,8 @@ export function QuizRound({ teamId, state }) {
           const isAnswered = answers[q.id] !== undefined;
           return (
             <div key={q.id} className="card" style={{
-              border: `1px solid ${isAnswered ? 'rgba(0,255,136,0.3)' : 'var(--border)'}`,
-              background: isAnswered ? 'rgba(0,255,136,0.04)' : 'var(--bg2)',
+              border: `1px solid ${isAnswered ? 'color-mix(in srgb, var(--accent) 30%, transparent)' : 'var(--border)'}`,
+              background: isAnswered ? 'color-mix(in srgb, var(--accent) 4%, transparent)' : 'var(--bg2)',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
@@ -247,7 +247,7 @@ export function QuizRound({ teamId, state }) {
                     return (
                       <button key={oi} onClick={() => setAnswer(q.id, opt)} style={{
                         textAlign: 'left', padding: '10px 14px', borderRadius: 6,
-                        background: selected ? 'rgba(0,255,136,0.15)' : 'var(--bg3)',
+                        background: selected ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'var(--bg3)',
                         border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
                         color: selected ? 'var(--accent)' : 'var(--text)',
                         cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: 14,

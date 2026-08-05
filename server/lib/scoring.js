@@ -1,3 +1,5 @@
+import { isAnswerCorrect } from './utils.js';
+
 export function calcPhase1Score(points, timeLimitSeconds, timeTakenMs) {
   const timeTakenSeconds = timeTakenMs / 1000;
   const timeBonus = Math.max(0, Math.round(timeLimitSeconds - timeTakenSeconds));
@@ -6,6 +8,63 @@ export function calcPhase1Score(points, timeLimitSeconds, timeTakenMs) {
 
 export function calcPhase3Score(ui, functionality, problemFit) {
   return Math.round((ui * 0.3 + functionality * 0.4 + problemFit * 0.3) * 10);
+}
+
+// ── CODE ARENA: Mission 2 — Bug Hunt grading ─────────────────────
+// Pure so it's unit-testable. Marks are split evenly across the
+// programs in play. Auto verdict comes from the same lenient matcher
+// used everywhere else; an admin override (per program, from the
+// review panel) always wins over the auto verdict.
+export function gradeBugHunt(answers = {}, programs = [], totalMarks = 30, overrides = {}) {
+  const n = programs.length || 1;
+  const perProgramMarks = Math.round((totalMarks / n) * 10) / 10;
+  const auto = {};
+  const per_program = {};
+  let score = 0;
+  programs.forEach(p => {
+    auto[p.id] = isAnswerCorrect(answers[p.id], p);
+    const override = overrides[p.id];
+    const marks = override !== undefined && override !== null
+      ? Math.max(0, Math.min(perProgramMarks, Number(override) || 0))
+      : (auto[p.id] ? perProgramMarks : 0);
+    per_program[p.id] = marks;
+    score += marks;
+  });
+  return { auto, per_program, per_program_marks: perProgramMarks, score: Math.round(score * 10) / 10 };
+}
+
+// ── CODE ARENA: Mission 3 — Code Strike scoring ──────────────────
+// Per problem: 70% correctness + 20% efficiency (judge-entered, 0–10
+// each) + 10% submission-time bonus (computed from when the team's
+// final paste landed relative to the mission timer). A fast wrong
+// answer earns nothing: zero correctness zeroes the whole problem.
+export function calcCodeStrikeProblemScore(problemMarks, correctness, efficiency, timeFactor) {
+  const c = Math.max(0, Math.min(10, Number(correctness) || 0));
+  const e = Math.max(0, Math.min(10, Number(efficiency) || 0));
+  const tf = Math.max(0, Math.min(1, Number(timeFactor) || 0));
+  if (c === 0) return 0;
+  // Round to 2 decimals — kills float noise like 10 * (0.7+0.2+0.1) = 9.9999...
+  return Math.round(problemMarks * (0.7 * c / 10 + 0.2 * e / 10 + 0.1 * tf) * 100) / 100;
+}
+
+// Total for one team across all problems, scaled so the mission is worth
+// exactly `totalMarks` even if the problems' own marks sum differently.
+// Unsubmitted or unjudged problems score 0.
+export function calcCodeStrikeTotal(team, problems = [], startedAt = null, durationMs = null, totalMarks = 50) {
+  const sumMarks = problems.reduce((a, p) => a + (p.marks || 0), 0) || 1;
+  let total = 0;
+  problems.forEach(p => {
+    const sub = team.codestrike_submissions?.[p.id];
+    const judge = team.codestrike_judge?.[p.id];
+    if (!sub || !judge) return;
+    let tf = 0;
+    if (startedAt && durationMs && sub.submitted_at) {
+      const elapsed = new Date(sub.submitted_at) - new Date(startedAt);
+      tf = Math.max(0, Math.min(1, 1 - elapsed / durationMs));
+    }
+    total += calcCodeStrikeProblemScore(p.marks || 0, judge.correctness, judge.efficiency, tf);
+  });
+  return Math.round(total * (totalMarks / sumMarks) * 10) / 10;
 }
 
 export function getPhase1Board(teams) {
@@ -26,6 +85,31 @@ export function getFinalBoard(teams) {
 // filters by phase3_judge_scores which don't exist when quiz is the last phase.
 export function getResultsBoard(teams, phasesEnabled = []) {
   const enabled = Array.isArray(phasesEnabled) ? phasesEnabled : [];
+
+  // CODE ARENA: combined mission leaderboard — active whenever Bug Hunt
+  // or Code Strike is part of the event. Each mission's marks were
+  // stored on the team when that mission was graded (quiz_marks_scored /
+  // bughunt_score / codestrike_score), so this is a pure sum. Ties break
+  // on tie-break round wins.
+  if (enabled.includes('bug_hunt') || enabled.includes('code_strike')) {
+    return [...teams]
+      .filter(t => !t.is_eliminated)
+      .map(t => {
+        const quiz = enabled.includes('quiz_round') ? (t.quiz_marks_scored || 0) : 0;
+        const bughunt = enabled.includes('bug_hunt') ? (t.bughunt_score || 0) : 0;
+        const codestrike = enabled.includes('code_strike') ? (t.codestrike_score || 0) : 0;
+        const total = Math.round((quiz + bughunt + codestrike) * 10) / 10;
+        return { t, total, breakdown: { quiz, bughunt, codestrike, tiebreak_wins: t.tiebreak_wins || 0 } };
+      })
+      .sort((a, b) => b.total - a.total || b.breakdown.tiebreak_wins - a.breakdown.tiebreak_wins)
+      .map(({ t, total, breakdown }, i) => ({
+        rank: i + 1,
+        team_id: t.id, team_name: t.name, color: t.color,
+        score: total,
+        scores: breakdown,
+        score_label: 'Total Marks',
+      }));
+  }
 
   // Phase 3 was played — use judge scores (original behaviour)
   if (enabled.includes('phase3')) {

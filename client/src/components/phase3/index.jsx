@@ -24,7 +24,7 @@ export function ProblemReveal({ problem, timerEnd }) {
         </div>
         <CountdownTimer endTime={timerEnd} label="Time Remaining" />
       </div>
-      <div style={{ padding: '20px 24px', background: 'rgba(0,170,255,0.05)', border: '1px solid rgba(0,170,255,0.2)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 16, lineHeight: 1.8, color: 'var(--text)', opacity: revealed ? 1 : 0, transform: revealed ? 'none' : 'translateY(8px)', transition: 'all 0.5s ease', marginBottom: 16 }}>
+      <div style={{ padding: '20px 24px', background: 'color-mix(in srgb, var(--info) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--info) 20%, transparent)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 16, lineHeight: 1.8, color: 'var(--text)', opacity: revealed ? 1 : 0, transform: revealed ? 'none' : 'translateY(8px)', transition: 'all 0.5s ease', marginBottom: 16 }}>
         {problem}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -114,7 +114,7 @@ export function SubmissionForm({ teamId, teamName }) {
         </div>
       )}
       {error && (
-        <div style={{ marginTop: 10, padding: '10px 14px', background: 'rgba(255,51,85,0.1)', border: '1px solid rgba(255,51,85,0.4)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--danger)' }}>
+        <div style={{ marginTop: 10, padding: '10px 14px', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--danger) 40%, transparent)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--danger)' }}>
           ⚠️ {error}
         </div>
       )}
@@ -197,7 +197,7 @@ export function ProblemSelector({ onReveal }) {
       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, marginBottom: 16, color: 'var(--info)' }}>SELECT PROBLEM STATEMENT</h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
         {PROBLEM_STATEMENTS.map((ps, i) => (
-          <button key={i} onClick={() => { setSelected(ps); setCustom(''); }} style={{ textAlign: 'left', padding: '12px 16px', background: selected === ps && !custom ? 'rgba(0,170,255,0.1)' : 'var(--bg3)', border: `1px solid ${selected === ps && !custom ? 'var(--info)' : 'var(--border)'}`, borderRadius: 6, color: 'var(--text)', textTransform: 'none', letterSpacing: 'normal', fontFamily: 'var(--font-body)', fontSize: 13, lineHeight: 1.5 }}>
+          <button key={i} onClick={() => { setSelected(ps); setCustom(''); }} style={{ textAlign: 'left', padding: '12px 16px', background: selected === ps && !custom ? 'color-mix(in srgb, var(--info) 10%, transparent)' : 'var(--bg3)', border: `1px solid ${selected === ps && !custom ? 'var(--info)' : 'var(--border)'}`, borderRadius: 6, color: 'var(--text)', textTransform: 'none', letterSpacing: 'normal', fontFamily: 'var(--font-body)', fontSize: 13, lineHeight: 1.5 }}>
             {ps}
           </button>
         ))}

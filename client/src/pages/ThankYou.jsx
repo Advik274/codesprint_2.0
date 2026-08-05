@@ -131,10 +131,16 @@ export default function ThankYou() {
 
   const tickerText = '✦ THANKS FOR COMPETING ✦ MAY YOUR CODE NEVER CRASH IN PRODUCTION ✦ DRINK WATER ✦ SLEEP PLEASE ✦ 404: YOUR EXCUSES NOT FOUND ✦ GIT PUSH YOUR DREAMS ✦ ';
 
+  // DELIBERATELY THEME-INDEPENDENT: the closing curtain is always the
+  // golden send-off, whatever palette the admin picked for the event.
+  // Every color on this page is pinned locally — don't swap these for
+  // theme variables or a custom theme will repaint the finale.
+  const CURTAIN_BG = '#16110b';
+
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'radial-gradient(ellipse at 50% 0%, rgba(255,165,0,0.12) 0%, rgba(255,215,0,0.04) 40%, #0a0a0f 70%)',
+      background: `radial-gradient(ellipse at 50% 0%, rgba(255,165,0,0.12) 0%, rgba(255,215,0,0.04) 40%, ${CURTAIN_BG} 70%)`,
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
@@ -242,7 +248,7 @@ export default function ThankYou() {
             <div style={{
               position: 'absolute', top: -11, left: '50%', transform: 'translateX(-50%)',
               fontFamily: 'var(--font-mono)', fontSize: 10, color: '#FFD700',
-              background: '#0a0a0f', padding: '0 12px', letterSpacing: '0.2em',
+              background: CURTAIN_BG, padding: '0 12px', letterSpacing: '0.2em',
             }}>
               // ENGINEERING_JOKE.js
             </div>
@@ -284,7 +290,7 @@ export default function ThankYou() {
           }}>
             <div>Built with ☕ caffeine, 🐛 bugs, and 0 sleep</div>
             <div style={{ color: 'rgba(255,215,0,0.2)', fontSize: 11 }}>
-              CODE SPRINT 2.0 v7 · {new Date().getFullYear()} · All bugs are features
+              {eventName} · {new Date().getFullYear()} · All bugs are features
             </div>
           </div>
         </div>

@@ -13,11 +13,11 @@ export function Navbar({ title, subtitle }) {
   const phase = state.app_state.current_phase;
 
   const phaseColors = {
-    lobby: '#5a5a70',
-    phase1: '#ffaa00',
-    phase2: '#00ff88',
-    phase3: '#00aaff',
-    results: '#aa55ff',
+    lobby: 'var(--text3)',
+    phase1: 'var(--warning)',
+    phase2: 'var(--accent)',
+    phase3: 'var(--info)',
+    results: 'var(--purple)',
   };
 
   return (
@@ -66,10 +66,10 @@ export function ToastContainer() {
   const { state, dispatch } = useApp();
 
   const typeStyles = {
-    success: { bg: 'rgba(0,255,136,0.1)', border: 'rgba(0,255,136,0.4)', color: 'var(--accent)' },
-    danger:  { bg: 'rgba(255,51,85,0.1)',  border: 'rgba(255,51,85,0.4)',  color: 'var(--danger)' },
-    warning: { bg: 'rgba(255,170,0,0.1)',  border: 'rgba(255,170,0,0.4)',  color: 'var(--warning)' },
-    info:    { bg: 'rgba(0,170,255,0.1)',  border: 'rgba(0,170,255,0.4)',  color: 'var(--info)' },
+    success: { bg: 'color-mix(in srgb, var(--accent) 10%, transparent)', border: 'color-mix(in srgb, var(--accent) 40%, transparent)', color: 'var(--accent)' },
+    danger:  { bg: 'color-mix(in srgb, var(--danger) 10%, transparent)',  border: 'color-mix(in srgb, var(--danger) 40%, transparent)',  color: 'var(--danger)' },
+    warning: { bg: 'color-mix(in srgb, var(--warning) 10%, transparent)',  border: 'color-mix(in srgb, var(--warning) 40%, transparent)',  color: 'var(--warning)' },
+    info:    { bg: 'color-mix(in srgb, var(--info) 10%, transparent)',  border: 'color-mix(in srgb, var(--info) 40%, transparent)',  color: 'var(--info)' },
   };
 
   return (

@@ -1,10 +1,27 @@
 import { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
 import { useSocket, getSocket, onConnectionChange } from '../hooks/useSocket';
+import { applyCustomTheme, watchThemeToggle, cacheTheme } from '../hooks/useThemeColors';
 
 const AppContext = createContext(null);
 
+// ── Event identity cache ──────────────────────────────────────────
+// event_config arrives over the socket, so for the first ~100ms after a
+// reload every screen fell back to the built-in default name — that's
+// the "CODE SPRINT 2.0" flash before the real event name appeared.
+// Seeding initial state from the last known identity removes it. Only
+// name/college/theme are cached: custom_questions carry answers and
+// must never be written to a participant's device.
+const IDENTITY_KEY = 'dominance_event_identity';
+function cachedIdentity() {
+  try {
+    const raw = localStorage.getItem(IDENTITY_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
 const init = {
   app_state: {
+    event_config: cachedIdentity() || undefined,
     current_phase: 'setup', phase1_round: 0, phase1_round_active: false,
     phase2_paused: false, phase3_paused: false, results_reveal_index: -1,
     master_paused: false, master_pause_reason: '',
@@ -205,6 +222,16 @@ export function AppProvider({ children }) {
     // Submission update — also comes via state:delta but keep this as backup
     'quiz:submission_update': (d) => dispatch({ type: 'STATE_DELTA', payload: { quiz_member_answers: d.submissions } }),
     'quiz:eliminated':     (d) => addToast({ message: `💀 ${d.count} team(s) eliminated after quiz`, type: 'warning' }),
+    // CODE ARENA: Bug Hunt / Code Strike / tie-break real-time sync —
+    // same backup-listener pattern as quiz:started above (state:delta
+    // also carries these, but the dedicated events survive races).
+    'bughunt:started':     (d) => dispatch({ type: 'STATE_DELTA', payload: { bughunt_active: true, bughunt_programs: d.programs, bughunt_timer_end: d.timer_end, bughunt_paused: false } }),
+    'bughunt:ended':       () => dispatch({ type: 'STATE_DELTA', payload: { bughunt_active: false } }),
+    'codestrike:started':  (d) => dispatch({ type: 'STATE_DELTA', payload: { codestrike_active: true, codestrike_problems: d.problems, codestrike_timer_end: d.timer_end, codestrike_paused: false } }),
+    'codestrike:ended':    () => dispatch({ type: 'STATE_DELTA', payload: { codestrike_active: false } }),
+    'tiebreak:started':    (d) => dispatch({ type: 'STATE_DELTA', payload: { tiebreak: d } }),
+    'tiebreak:update':     (d) => dispatch({ type: 'STATE_DELTA', payload: { tiebreak: d } }),
+    'tiebreak:cleared':    () => dispatch({ type: 'STATE_DELTA', payload: { tiebreak: null } }),
     'toast:broadcast':     (d) => addToast(d),
     // Admin feedback events
     'admin:problem_assigned': (d) => addToast({ message: `✅ Problem sent to ${d.target === 'all' ? `all teams` : d.team_name}`, type: 'success' }),
@@ -218,6 +245,29 @@ export function AppProvider({ children }) {
   });
 
   useEffect(() => onConnectionChange((c) => dispatch({ type: 'CONNECTED', payload: c })), []);
+
+  // Custom event theme — admin-picked colors live in event_config and
+  // sync to every screen; apply them as CSS variables the moment they
+  // arrive (and re-apply when the light/dark toggle flips).
+  const customTheme = state.app_state?.event_config?.theme || null;
+  useEffect(() => {
+    applyCustomTheme(customTheme);
+    return watchThemeToggle(customTheme);
+  }, [JSON.stringify(customTheme)]);
+
+  // Keep the local cache in step with the server so the next reload
+  // paints the right identity + colors before the socket connects.
+  const cfgName = state.app_state?.event_config?.event_name;
+  const cfgCollege = state.app_state?.event_config?.college_name;
+  useEffect(() => {
+    if (!cfgName) return;
+    try {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify({
+        event_name: cfgName, college_name: cfgCollege || '', theme: customTheme,
+      }));
+    } catch { /* best-effort */ }
+    cacheTheme(customTheme);
+  }, [cfgName, cfgCollege, JSON.stringify(customTheme)]);
 
   const emit = useCallback((event, data = {}) =>
     getSocket().emit(event, data)

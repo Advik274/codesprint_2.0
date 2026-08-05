@@ -16,6 +16,16 @@ const PHASE_INFO = {
     body: 'Every member of your team gets the same set of questions and answers on their own device, within one shared timer for the whole team. Your team\'s score is the average across everyone who submits — so a team where everyone participates beats a team where one person carries.',
     tip: 'Submit before the timer runs out — once it ends, whatever you\'ve answered is final.',
   },
+  bug_hunt: {
+    icon: '🐛', name: 'Bug Hunt', tagline: 'Fix broken code, together',
+    body: 'Your team receives a set of short programs in Java, C++ and Python — each one is broken. Read the code, find the syntax or logic error, and type the corrected line for each. One submission per team (one laptop), so debate before you lock it in. Marks per program for every correct fix.',
+    tip: 'The comment markers in the code point at the neighbourhood of the bug — but write the FIX, not a description of it. Copy the line and correct it.',
+  },
+  code_strike: {
+    icon: '⚔️', name: 'Code Strike', tagline: 'Three problems, one clock',
+    body: 'Three programming problems drop at once — Easy, Medium, Hard, each worth more marks than the last. Write your solutions in any editor, then paste the final code into the platform per problem. Evaluators score correctness and efficiency; submitting earlier earns a time bonus. You can re-submit until time runs out, but the latest paste resets your submission time.',
+    tip: 'Bank the Easy problem fast for the time bonus, then split the team across Medium and Hard. Test against the sample inputs before pasting.',
+  },
   phase2: {
     icon: '🗺️', name: 'Campus Conquest', tagline: 'Battery is your life',
     body: 'Physically walk to a zone as a team, enter your passcode, and solve the challenge shown there to capture it. Your battery drains constantly in the background. Attempting a zone costs battery whether you win or lose; capturing one refills a chunk of it. Battery hits 0% — you\'re out.',
@@ -33,7 +43,7 @@ const PHASE_INFO = {
   },
 };
 
-const PHASE_ORDER = ['phase1', 'quiz_round', 'phase2', 'phase3', 'speed_demo'];
+const PHASE_ORDER = ['phase1', 'quiz_round', 'bug_hunt', 'code_strike', 'phase2', 'phase3', 'speed_demo'];
 
 export default function Guide() {
   const { state } = useApp();

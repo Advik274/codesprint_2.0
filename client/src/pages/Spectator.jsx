@@ -16,8 +16,8 @@ export default function Spectator() {
     if (state.showThankYou) navigate('/thankyou');
   }, [state.showThankYou]);
 
-  const phaseColors = { setup:'var(--text3)', phase1:'var(--warning)', phase2:'var(--accent)', quiz_round:'var(--info)', phase3:'var(--info)', speed_demo:'var(--purple)', results:'var(--purple)' };
-  const phaseNames = { setup:'Setting Up', phase1:'Phase 1 — The Gauntlet', phase2:'Phase 2 — Campus Conquest', quiz_round:'Quiz Round', phase3:'Phase 3 — Final Build', speed_demo:'Speed Demo — Audience Vote', results:'Final Results' };
+  const phaseColors = { setup:'var(--text3)', phase1:'var(--warning)', phase2:'var(--accent)', quiz_round:'var(--info)', bug_hunt:'var(--danger)', code_strike:'var(--purple)', phase3:'var(--info)', speed_demo:'var(--purple)', results:'var(--purple)' };
+  const phaseNames = { setup:'Setting Up', phase1:'Phase 1 — The Gauntlet', phase2:'Phase 2 — Campus Conquest', quiz_round:'Intelligence Scan', bug_hunt:'Bug Hunt', code_strike:'Code Strike', phase3:'Phase 3 — Final Build', speed_demo:'Speed Demo — Audience Vote', results:'Final Results' };
 
   const phase1Board = [...state.teams].sort((a,b) => b.phase1_total_score - a.phase1_total_score);
   const phase2Board = [...state.teams].filter(t=>!t.is_eliminated).sort((a,b) => b.zones_captured-a.zones_captured||b.battery-a.battery);
@@ -25,7 +25,18 @@ export default function Spectator() {
   // Smart finalBoard — use the right score metric based on which phases were enabled
   // This fixes the bug where quiz-only events showed nothing in Results
   const phasesEnabled = state.app_state?.event_config?.phases_enabled || [];
+  // CODE ARENA: combined mission total (mirrors server getResultsBoard)
+  const isArena = phasesEnabled.includes('bug_hunt') || phasesEnabled.includes('code_strike');
+  const arenaTotalOf = (t) =>
+    (phasesEnabled.includes('quiz_round') ? (t.quiz_marks_scored||0) : 0)
+    + (phasesEnabled.includes('bug_hunt') ? (t.bughunt_score||0) : 0)
+    + (phasesEnabled.includes('code_strike') ? (t.codestrike_score||0) : 0);
   const finalBoard = (() => {
+    if (isArena) {
+      return [...state.teams]
+        .filter(t => !t.is_eliminated)
+        .sort((a, b) => arenaTotalOf(b) - arenaTotalOf(a) || (b.tiebreak_wins||0) - (a.tiebreak_wins||0));
+    }
     if (phasesEnabled.includes('phase3')) {
       return [...state.teams]
         .filter(t => t.phase3_judge_scores)
@@ -41,11 +52,13 @@ export default function Spectator() {
       .sort((a, b) => (b.phase1_total_score || 0) - (a.phase1_total_score || 0));
   })();
   const finalScoreOf = (team) => {
+    if (isArena) return Math.round(arenaTotalOf(team) * 10) / 10;
     if (phasesEnabled.includes('phase3')) return team.phase3_judge_scores?.total ?? '—';
     if (phasesEnabled.includes('quiz_round')) return team.quiz_score ?? '—';
     return team.phase1_total_score ?? '—';
   };
-  const finalScoreLabel = phasesEnabled.includes('phase3') ? 'Judge Score'
+  const finalScoreLabel = isArena ? 'Total Marks'
+    : phasesEnabled.includes('phase3') ? 'Judge Score'
     : phasesEnabled.includes('quiz_round') ? 'Quiz Score' : 'Gauntlet Score';
   const medal = (i) => ['🥇','🥈','🥉'][i]||`#${i+1}`;
   const rankColor = (i) => ['#FFD700','#C0C0C0','#CD7F32'][i]||'var(--text3)';
@@ -120,10 +133,14 @@ export default function Spectator() {
         </div>
         <div style={{ textAlign:'center' }}>
           <div style={{ fontFamily:'var(--font-display)', fontSize:20, color:phaseColors[phase] }}>{phaseNames[phase]}</div>
-          {phase==='phase1'&&state.app_state.phase1_round>0&&<div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)', marginTop:4 }}>Round {state.app_state.phase1_round}/5 {state.app_state.phase1_round_active?<span style={{color:'var(--danger)'}}>● LIVE</span>:''}</div>}
+          {phase==='phase1'&&state.app_state.phase1_round>0&&<div style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)', marginTop:4 }}>Round {state.app_state.phase1_round}/{state.app_state.event_config?.phase1_rounds??5} {state.app_state.phase1_round_active?<span style={{color:'var(--danger)'}}>● LIVE</span>:''}</div>}
           {phase==='phase2'&&<CountdownTimer endTime={state.app_state.phase2_timer_end} paused={state.app_state.phase2_paused}/>}
           {phase==='quiz_round'&&state.app_state.quiz_round_active&&<CountdownTimer endTime={state.app_state.quiz_timer_end} paused={state.app_state.quiz_paused}/>}
           {phase==='quiz_round'&&state.app_state.quiz_paused&&<span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--warning)'}}>⏸ PAUSED</span>}
+          {phase==='bug_hunt'&&state.app_state.bughunt_active&&<CountdownTimer endTime={state.app_state.bughunt_timer_end} paused={state.app_state.bughunt_paused}/>}
+          {phase==='bug_hunt'&&state.app_state.bughunt_paused&&<span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--warning)'}}>⏸ PAUSED</span>}
+          {phase==='code_strike'&&state.app_state.codestrike_active&&<CountdownTimer endTime={state.app_state.codestrike_timer_end} paused={state.app_state.codestrike_paused}/>}
+          {phase==='code_strike'&&state.app_state.codestrike_paused&&<span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--warning)'}}>⏸ PAUSED</span>}
           {phase==='phase3'&&<CountdownTimer endTime={state.app_state.phase3_timer_end} paused={state.app_state.phase3_paused}/>}
           {phase==='speed_demo'&&currentDemoId&&<CountdownTimer endTime={state.app_state.speed_demo_timer_end} paused={false}/>}
         </div>
@@ -141,7 +158,7 @@ export default function Spectator() {
       {flash && (
         <div style={{
           position:'fixed', inset:0, zIndex:5, pointerEvents:'none',
-          background: flash==='eliminate' ? 'rgba(255,51,85,0.12)' : flash==='winner' ? 'rgba(255,215,0,0.14)' : 'rgba(0,255,136,0.1)',
+          background: flash==='eliminate' ? 'color-mix(in srgb, var(--danger) 12%, transparent)' : flash==='winner' ? 'rgba(255,215,0,0.14)' : 'color-mix(in srgb, var(--accent) 10%, transparent)',
           animation:'fadeIn 0.15s ease',
         }}/>
       )}
@@ -163,7 +180,7 @@ export default function Spectator() {
         {phase==='phase1'&&(
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
             {phase1Board.map((team,i)=>(
-              <div key={team.id} style={{ display:'flex', alignItems:'center', gap:16, padding:'14px 20px', borderRadius:8, background:i===0?'rgba(0,255,136,0.06)':'var(--bg2)', border:`1px solid ${i<3?rankColor(i)+'44':'var(--border)'}`, opacity:team.is_eliminated?0.3:1 }}>
+              <div key={team.id} style={{ display:'flex', alignItems:'center', gap:16, padding:'14px 20px', borderRadius:8, background:i===0?'color-mix(in srgb, var(--accent) 6%, transparent)':'var(--bg2)', border:`1px solid ${i<3?rankColor(i)+'44':'var(--border)'}`, opacity:team.is_eliminated?0.3:1 }}>
                 <div style={{ fontFamily:'var(--font-display)', fontSize:26, width:48, textAlign:'center', color:rankColor(i) }}>{i<3?medal(i):`#${i+1}`}</div>
                 <div style={{ width:12, height:12, borderRadius:'50%', background:team.color, flexShrink:0 }}/>
                 <div style={{ flex:1 }}>
@@ -200,7 +217,7 @@ export default function Spectator() {
                 <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                   <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', textAlign:'center', marginBottom:4, textTransform:'uppercase', letterSpacing:'0.1em' }}>Quiz Scores</div>
                   {quizBoard.map((team,i)=>(
-                    <div key={team.id} style={{ display:'flex', alignItems:'center', gap:16, padding:'14px 20px', borderRadius:8, background:i===0?'rgba(0,255,136,0.06)':'var(--bg2)', border:`1px solid ${i<3?rankColor(i)+'44':'var(--border)'}` }}>
+                    <div key={team.id} style={{ display:'flex', alignItems:'center', gap:16, padding:'14px 20px', borderRadius:8, background:i===0?'color-mix(in srgb, var(--accent) 6%, transparent)':'var(--bg2)', border:`1px solid ${i<3?rankColor(i)+'44':'var(--border)'}` }}>
                       <div style={{ fontFamily:'var(--font-display)', fontSize:26, width:48, textAlign:'center', color:rankColor(i) }}>{i<3?medal(i):`#${i+1}`}</div>
                       <div style={{ width:12, height:12, borderRadius:'50%', background:team.color, flexShrink:0 }}/>
                       <div style={{ flex:1, fontFamily:'var(--font-display)', fontSize:20 }}>{team.name}</div>
@@ -221,6 +238,134 @@ export default function Spectator() {
                         <div style={{ flex:1, fontFamily:'var(--font-display)', fontSize:18 }}>{team.name}</div>
                         <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color: submitted ? 'var(--accent)' : 'var(--text3)' }}>
                           {submitted ? `✓ ${Object.keys(memberAnswers[team.id]).length} submitted` : '○ answering...'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* CODE ARENA: tie-break spotlight — shows on top of any phase */}
+        {state.app_state.tiebreak&&(()=>{
+          const tb = state.app_state.tiebreak;
+          const tbTeams = tb.team_ids.map(id=>state.teams.find(t=>t.id===id)).filter(Boolean);
+          return (
+            <div style={{ marginBottom:24, padding:'20px 24px', borderRadius:10, border:'2px solid var(--warning)', background:'color-mix(in srgb, var(--warning) 6%, transparent)', textAlign:'center' }}>
+              <div style={{ fontFamily:'var(--font-display)', fontSize:26, color:'var(--warning)', animation:'glitch 3s infinite', marginBottom:6 }}>⚡ TIE-BREAKER</div>
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:13, color:'var(--text2)', marginBottom:10 }}>
+                {tbTeams.map(t=>t.name).join('  vs  ')} — fastest correct answer wins!
+              </div>
+              {tb.winner ? (
+                <div style={{ fontFamily:'var(--font-display)', fontSize:30, color:'var(--accent)' }}>
+                  🏆 {tb.winner.team_name} — {(tb.winner.time_ms/1000).toFixed(1)}s
+                </div>
+              ) : (
+                <div style={{ display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap' }}>
+                  {tbTeams.map(t=>{
+                    const a = (tb.answers||[]).find(x=>x.team_id===t.id);
+                    return (
+                      <div key={t.id} style={{ padding:'8px 18px', borderRadius:6, border:`1px solid ${t.color}66`, color:t.color, fontFamily:'var(--font-mono)', fontSize:13 }}>
+                        {t.name} {a ? (a.correct?'✅':'❌') : '…'}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {phase==='bug_hunt'&&(()=>{
+          const active = state.app_state.bughunt_active;
+          const activeTeamsB = state.teams.filter(t=>!t.is_eliminated);
+          const graded = activeTeamsB.some(t=>t.bughunt_score !== null && t.bughunt_score !== undefined);
+          const board = [...activeTeamsB].sort((a,b)=>(b.bughunt_score||0)-(a.bughunt_score||0));
+          return (
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' }}>
+                <div style={{ padding:'8px 20px', borderRadius:6, background:'var(--bg2)', border:'1px solid var(--border)', fontFamily:'var(--font-mono)', fontSize:13 }}>
+                  {active ? <span style={{color:'var(--danger)'}}>● LIVE — squashing bugs</span> : <span style={{color:'var(--text3)'}}>● ENDED</span>}
+                </div>
+                <div style={{ padding:'8px 20px', borderRadius:6, background:'var(--bg2)', border:'1px solid var(--border)', fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>
+                  🐛 {activeTeamsB.filter(t=>t.bughunt_submitted_at).length} / {activeTeamsB.length} teams submitted
+                </div>
+              </div>
+              {graded ? (
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', textAlign:'center', textTransform:'uppercase', letterSpacing:'0.1em' }}>Bug Hunt Marks</div>
+                  {board.map((team,i)=>(
+                    <div key={team.id} style={{ display:'flex', alignItems:'center', gap:16, padding:'14px 20px', borderRadius:8, background:i===0?'color-mix(in srgb, var(--danger) 6%, transparent)':'var(--bg2)', border:`1px solid ${i<3?rankColor(i)+'44':'var(--border)'}` }}>
+                      <div style={{ fontFamily:'var(--font-display)', fontSize:26, width:48, textAlign:'center', color:rankColor(i) }}>{i<3?medal(i):`#${i+1}`}</div>
+                      <div style={{ width:12, height:12, borderRadius:'50%', background:team.color, flexShrink:0 }}/>
+                      <div style={{ flex:1, fontFamily:'var(--font-display)', fontSize:20 }}>{team.name}</div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:30, fontWeight:700, color:'var(--accent)' }}>{team.bughunt_score ?? 0}</div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>marks</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {activeTeamsB.map(team=>(
+                    <div key={team.id} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 18px', borderRadius:8, background:'var(--bg2)', border:`1px solid ${team.bughunt_submitted_at?team.color+'55':'var(--border)'}` }}>
+                      <div style={{ width:10, height:10, borderRadius:'50%', background:team.color, flexShrink:0 }}/>
+                      <div style={{ flex:1, fontFamily:'var(--font-display)', fontSize:18 }}>{team.name}</div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:12, color: team.bughunt_submitted_at ? 'var(--accent)' : 'var(--text3)' }}>
+                        {team.bughunt_submitted_at ? '✓ fixes locked in' : '○ debugging...'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {phase==='code_strike'&&(()=>{
+          const active = state.app_state.codestrike_active;
+          const problems = state.app_state.codestrike_problems || [];
+          const activeTeamsC = state.teams.filter(t=>!t.is_eliminated);
+          const judged = activeTeamsC.some(t=>t.codestrike_score !== null && t.codestrike_score !== undefined);
+          const board = [...activeTeamsC].sort((a,b)=>(b.codestrike_score||0)-(a.codestrike_score||0));
+          return (
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' }}>
+                <div style={{ padding:'8px 20px', borderRadius:6, background:'var(--bg2)', border:'1px solid var(--border)', fontFamily:'var(--font-mono)', fontSize:13 }}>
+                  {active ? <span style={{color:'var(--purple)'}}>● LIVE — 3 problems</span> : <span style={{color:'var(--text3)'}}>● {judged ? 'JUDGED' : 'JUDGING'}</span>}
+                </div>
+              </div>
+              {judged ? (
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', textAlign:'center', textTransform:'uppercase', letterSpacing:'0.1em' }}>Code Strike Marks</div>
+                  {board.map((team,i)=>(
+                    <div key={team.id} style={{ display:'flex', alignItems:'center', gap:16, padding:'14px 20px', borderRadius:8, background:i===0?'color-mix(in srgb, var(--purple) 7%, transparent)':'var(--bg2)', border:`1px solid ${i<3?rankColor(i)+'44':'var(--border)'}` }}>
+                      <div style={{ fontFamily:'var(--font-display)', fontSize:26, width:48, textAlign:'center', color:rankColor(i) }}>{i<3?medal(i):`#${i+1}`}</div>
+                      <div style={{ width:12, height:12, borderRadius:'50%', background:team.color, flexShrink:0 }}/>
+                      <div style={{ flex:1, fontFamily:'var(--font-display)', fontSize:20 }}>{team.name}</div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:30, fontWeight:700, color:'var(--accent)' }}>{team.codestrike_score ?? 0}</div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>marks</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {activeTeamsC.map(team=>{
+                    const solved = Object.keys(team.codestrike_submitted||{}).length;
+                    return (
+                      <div key={team.id} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 18px', borderRadius:8, background:'var(--bg2)', border:`1px solid ${solved>0?team.color+'55':'var(--border)'}` }}>
+                        <div style={{ width:10, height:10, borderRadius:'50%', background:team.color, flexShrink:0 }}/>
+                        <div style={{ flex:1, fontFamily:'var(--font-display)', fontSize:18 }}>{team.name}</div>
+                        <div style={{ display:'flex', gap:6 }}>
+                          {problems.map(p=>{
+                            const done = !!team.codestrike_submitted?.[p.id];
+                            return (
+                              <span key={p.id} style={{ fontFamily:'var(--font-mono)', fontSize:11, padding:'3px 10px', borderRadius:4, border:`1px solid ${done?'var(--accent)':'var(--border)'}`, color:done?'var(--accent)':'var(--text3)' }}>
+                                {done?'✓':'○'} {p.difficulty}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -400,7 +545,13 @@ export default function Spectator() {
                     <div style={{ width:12, height:12, borderRadius:'50%', background:team.color }}/>
                     <div style={{ flex:1 }}>
                       <div style={{ fontFamily:'var(--font-display)', fontSize:i===0?28:22, color:i===0?'#FFD700':'var(--text)' }}>{team.name}</div>
-                      {i===0&&team.phase3_judge_scores&&<div style={{ display:'flex', gap:16, marginTop:4 }}>{[['UI',team.phase3_judge_scores.ui],['Func',team.phase3_judge_scores.functionality],['Fit',team.phase3_judge_scores.problem_fit]].map(([l,v])=><span key={l} style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>{l}: {v}/10</span>)}</div>}
+                      {i===0&&!isArena&&team.phase3_judge_scores&&<div style={{ display:'flex', gap:16, marginTop:4 }}>{[['UI',team.phase3_judge_scores.ui],['Func',team.phase3_judge_scores.functionality],['Fit',team.phase3_judge_scores.problem_fit]].map(([l,v])=><span key={l} style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>{l}: {v}/10</span>)}</div>}
+                      {isArena&&<div style={{ display:'flex', gap:16, marginTop:4, flexWrap:'wrap' }}>
+                        {phasesEnabled.includes('quiz_round')&&<span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>Scan: {team.quiz_marks_scored ?? 0}</span>}
+                        {phasesEnabled.includes('bug_hunt')&&<span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>Bug Hunt: {team.bughunt_score ?? 0}</span>}
+                        {phasesEnabled.includes('code_strike')&&<span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--text3)' }}>Code Strike: {team.codestrike_score ?? 0}</span>}
+                        {(team.tiebreak_wins||0)>0&&<span style={{ fontFamily:'var(--font-mono)', fontSize:12, color:'var(--warning)' }}>⚡ tie-break win</span>}
+                      </div>}
                     </div>
                     <div style={{ textAlign:'right' }}>
                       <div style={{ fontFamily:'var(--font-mono)', fontSize:i===0?40:28, fontWeight:700, color:i===0?'#FFD700':'var(--accent)' }}>{finalScoreOf(team)}</div>
@@ -419,7 +570,7 @@ export default function Spectator() {
       {tickerItems.length > 0 && (
         <div style={{
           position:'fixed', bottom:0, left:0, right:0, height:36,
-          background:'rgba(10,10,18,0.95)', borderTop:'1px solid var(--border)',
+          background:'rgba(22,17,11,0.95)', borderTop:'1px solid var(--border)',
           display:'flex', alignItems:'center', zIndex:50, overflow:'hidden',
         }}>
           <div style={{
@@ -444,10 +595,15 @@ export default function Spectator() {
                 zone_captured:'var(--accent)', zone_attempt:'var(--warning)',
                 elimination:'var(--danger)', phase_change:'var(--info)',
                 speed_demo:'var(--purple)', scoring:'var(--accent)',
+                bughunt:'var(--danger)', codestrike:'var(--purple)',
+                tiebreak:'var(--warning)', quiz:'var(--info)',
+                violation:'var(--danger)',
               }[entry.type] || 'var(--text3)';
               const typeIcon = {
                 zone_captured:'🏴', zone_attempt:'⚡', elimination:'💀',
                 phase_change:'⚙️', speed_demo:'🎤', scoring:'📊',
+                bughunt:'🐛', codestrike:'⚔️', tiebreak:'⚡', quiz:'🧠',
+                violation:'🚨',
               }[entry.type] || '•';
               return (
                 <span key={i} style={{

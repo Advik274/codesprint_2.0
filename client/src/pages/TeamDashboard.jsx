@@ -6,6 +6,9 @@ import { Navbar, ToastContainer, BatteryBar, CountdownTimer, HelpButton, MemePop
 import { QuestionCard, EliminationOverlay, Phase1Leaderboard } from '../components/phase1/index.jsx';
 import { SubmissionForm } from '../components/phase3/index.jsx';
 import { QuizRound, QuizResultCard } from '../components/quiz/index.jsx';
+import { BugHuntRound } from '../components/bughunt/index.jsx';
+import { CodeStrikeRound } from '../components/codestrike/index.jsx';
+import { TieBreakOverlay } from '../components/tiebreak/index.jsx';
 
 export default function TeamDashboard() {
   const { teamId } = useParams();
@@ -64,6 +67,41 @@ export default function TeamDashboard() {
     prevRankRef.current[phaseForRank] = rank;
   }, [state.teams, phaseForRank, teamId]);
 
+  // ── 🔒 Protected Mode enforcement ────────────────────────────────
+  // While the admin has Protected Mode on AND a locked round is live
+  // (quiz / bug hunt / a tie-break involving this team), copy, paste and
+  // right-click are blocked, and every tab/app switch is reported to the
+  // server the moment it happens. Code Strike is deliberately exempt —
+  // teams have to switch to their own editor during it.
+  const tbLive = state.app_state?.tiebreak?.active && state.app_state.tiebreak.team_ids?.includes(teamId);
+  const lockdown = !!state.app_state?.event_config?.protected_mode
+    && !team?.is_eliminated
+    && (state.app_state.quiz_round_active || state.app_state.bughunt_active || tbLive);
+  const [violationFlash, setViolationFlash] = useState(null);
+  useEffect(() => {
+    if (!lockdown) return;
+    const socket = getSocket();
+    const report = (vtype) => socket.emit('team:violation', { vtype });
+    const onVis = () => { if (document.hidden) report('tab_switch'); };
+    const onCopyPaste = (e) => { e.preventDefault(); report('copy_paste'); };
+    const onCtx = (e) => e.preventDefault();
+    const onRecorded = (d) => { setViolationFlash(d); setTimeout(() => setViolationFlash(null), 5000); };
+    document.addEventListener('visibilitychange', onVis);
+    document.addEventListener('copy', onCopyPaste);
+    document.addEventListener('cut', onCopyPaste);
+    document.addEventListener('paste', onCopyPaste);
+    document.addEventListener('contextmenu', onCtx);
+    socket.on('team:violation_recorded', onRecorded);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      document.removeEventListener('copy', onCopyPaste);
+      document.removeEventListener('cut', onCopyPaste);
+      document.removeEventListener('paste', onCopyPaste);
+      document.removeEventListener('contextmenu', onCtx);
+      socket.off('team:violation_recorded', onRecorded);
+    };
+  }, [lockdown, teamId]);
+
   if (!team) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>Loading...</div></div>;
 
   const phase = state.app_state.current_phase;
@@ -72,7 +110,18 @@ export default function TeamDashboard() {
     <div style={{ minHeight: '100vh', paddingBottom: 40 }}>
       <Navbar subtitle={team.name} />
       <ToastContainer />
+      {lockdown && (
+        <div style={{ position: 'sticky', top: 0, zIndex: 300, background: 'color-mix(in srgb, var(--danger) 10%, transparent)', borderBottom: '1px solid var(--danger)', padding: '6px 14px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--danger)' }}>
+          🔒 PROTECTED MODE — leaving this tab or using copy/paste is recorded and reported to the admin
+        </div>
+      )}
+      {violationFlash && (
+        <div style={{ position: 'fixed', top: 72, left: '50%', transform: 'translateX(-50%)', zIndex: 600, maxWidth: '92vw', background: 'var(--bg2)', border: '2px solid var(--danger)', borderRadius: 8, padding: '12px 20px', fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--danger)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+          🚨 Violation #{violationFlash.total} recorded — {violationFlash.type === 'tab_switch' ? 'you left the event tab' : 'copy/paste is disabled in this round'}. The admin has been notified.
+        </div>
+      )}
       {showEliminated && <EliminationOverlay team={team} onDismiss={() => { setShowEliminated(false); navigate('/spectator'); }} />}
+      {!team.is_eliminated && <TieBreakOverlay teamId={teamId} state={state} />}
       {!team.is_eliminated && !['setup','results'].includes(phase) && (
         <HelpButton teamId={teamId} teamName={team.name} phase={phase} />
       )}
@@ -106,7 +155,7 @@ export default function TeamDashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, color: 'var(--warning)' }}>THE GAUNTLET</h1>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>Round {state.app_state.phase1_round || 0} / 5</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>Round {state.app_state.phase1_round || 0} / {state.app_state.event_config?.phase1_rounds ?? 5}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 30, fontWeight: 700, color: 'var(--accent)' }}>{team.phase1_total_score}</div>
@@ -158,6 +207,28 @@ export default function TeamDashboard() {
               </div>
             )}
           </div>
+        )}
+
+        {phase === 'bug_hunt' && (
+          team.is_eliminated ? (
+            <div className="card" style={{ border: '1px solid var(--danger)', textAlign: 'center', padding: 32 }}>
+              <div style={{ fontSize: 40 }}>💀</div>
+              <div style={{ fontFamily: 'var(--font-display)', color: 'var(--danger)', fontSize: 24, marginTop: 8 }}>ELIMINATED</div>
+            </div>
+          ) : (
+            <BugHuntRound teamId={teamId} state={state} />
+          )
+        )}
+
+        {phase === 'code_strike' && (
+          team.is_eliminated ? (
+            <div className="card" style={{ border: '1px solid var(--danger)', textAlign: 'center', padding: 32 }}>
+              <div style={{ fontSize: 40 }}>💀</div>
+              <div style={{ fontFamily: 'var(--font-display)', color: 'var(--danger)', fontSize: 24, marginTop: 8 }}>ELIMINATED</div>
+            </div>
+          ) : (
+            <CodeStrikeRound teamId={teamId} state={state} />
+          )
         )}
 
         {phase === 'phase3' && (
@@ -310,14 +381,14 @@ function Phase2View({ team, teamId, state }) {
         <>
           {/* Defense problem success toast */}
           {defenseSet && (
-            <div style={{ marginBottom: 12, padding: '10px 16px', background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.3)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--accent)' }}>
+            <div style={{ marginBottom: 12, padding: '10px 16px', background: 'color-mix(in srgb, var(--accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--accent)' }}>
               🔒 Defense set for zone! Problem: "{defenseSet.label}"
             </div>
           )}
 
           {/* MY ZONES — with Set Defense button */}
           {myZones.length > 0 && (
-            <div className="card" style={{ marginBottom: 16, border: '1px solid rgba(0,255,136,0.2)' }}>
+            <div className="card" style={{ marginBottom: 16, border: '1px solid color-mix(in srgb, var(--accent) 20%, transparent)' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--accent)', marginBottom: 12 }}>
                 🏴 YOUR ZONES
               </div>
@@ -375,13 +446,13 @@ function Phase2View({ team, teamId, state }) {
                     display: 'flex', alignItems: 'center', gap: 12,
                     padding: '12px 14px', borderRadius: 8,
                     background: isOwner ? `${team.color}11` : 'var(--bg3)',
-                    border: `1px solid ${isOwner ? team.color + '55' : isBusy ? 'rgba(255,170,0,0.4)' : ownerTeam ? ownerTeam.color + '44' : 'var(--border)'}`,
+                    border: `1px solid ${isOwner ? team.color + '55' : isBusy ? 'color-mix(in srgb, var(--warning) 40%, transparent)' : ownerTeam ? ownerTeam.color + '44' : 'var(--border)'}`,
                   }}>
                     {/* Status dot */}
                     <div style={{
                       width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
                       background: isOwner ? team.color : ownerTeam ? ownerTeam.color : 'var(--text3)',
-                      boxShadow: isBusy ? '0 0 8px rgba(255,170,0,0.8)' : 'none',
+                      boxShadow: isBusy ? '0 0 8px color-mix(in srgb, var(--warning) 80%, transparent)' : 'none',
                       animation: isBusy ? 'pulse-accent 0.8s infinite' : 'none',
                     }} />
 

@@ -236,7 +236,7 @@ export default function ZoneOperator() {
                   <button className="btn-danger" onClick={handleTeamArrive} disabled={!passcode.trim()} style={{ width: '100%', padding: 16, fontSize: 18 }}>⚡ Team Attempting Capture</button>
                 </>
               )}
-              {error && <div style={{ marginTop: 14, color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px', background: 'rgba(255,51,85,0.08)', borderRadius: 6 }}>{error}</div>}
+              {error && <div style={{ marginTop: 14, color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px', background: 'color-mix(in srgb, var(--danger) 8%, transparent)', borderRadius: 6 }}>{error}</div>}
             </div>
           )}
 
@@ -328,7 +328,7 @@ export default function ZoneOperator() {
               {wrongFeedback && (
                 <div style={{
                   padding: '10px 16px', borderRadius: 8, marginBottom: 12,
-                  background: 'rgba(255,51,85,0.1)', border: '1px solid var(--danger)',
+                  background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)',
                   fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--danger)',
                   animation: 'fadeIn 0.2s ease',
                 }}>
@@ -340,7 +340,7 @@ export default function ZoneOperator() {
               {hint && (
                 <div style={{
                   padding: '10px 16px', borderRadius: 8, marginBottom: 12,
-                  background: 'rgba(255,170,0,0.1)', border: '1px solid var(--warning)',
+                  background: 'color-mix(in srgb, var(--warning) 10%, transparent)', border: '1px solid var(--warning)',
                   fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--warning)',
                 }}>
                   💡 Hint: {hint}
@@ -348,7 +348,7 @@ export default function ZoneOperator() {
               )}
 
               {/* TEAM TYPES HERE */}
-              <div style={{ background: 'rgba(0,255,136,0.04)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 8, padding: '16px', marginBottom: 16 }}>
+              <div style={{ background: 'color-mix(in srgb, var(--accent) 4%, transparent)', border: '1px solid color-mix(in srgb, var(--accent) 20%, transparent)', borderRadius: 8, padding: '16px', marginBottom: 16 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', marginBottom: 8, letterSpacing: '0.1em' }}>
                   ↓ TEAM — TYPE YOUR ANSWER HERE
                 </div>
@@ -383,7 +383,7 @@ export default function ZoneOperator() {
                 {result.message}
               </div>
               {result.success && (
-                <div style={{ marginTop: 12, padding: '12px', background: 'rgba(0,255,136,0.08)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--accent)' }}>
+                <div style={{ marginTop: 12, padding: '12px', background: 'color-mix(in srgb, var(--accent) 8%, transparent)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--accent)' }}>
                   ⚡ New owner must set their defense problem from their team dashboard!
                 </div>
               )}
@@ -408,11 +408,11 @@ function formatProblem(text) {
       const code = part.slice(3, -3).replace(/^[a-z]+\n/, ''); // strip language tag
       return (
         <pre key={i} style={{
-          background: '#0d1117', border: '1px solid #30363d',
+          background: 'var(--bg3)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '14px 16px',
           fontFamily: 'var(--font-mono)', fontSize: 13,
           overflowX: 'auto', margin: '10px 0',
-          lineHeight: 1.6, color: '#c9d1d9',
+          lineHeight: 1.6, color: 'var(--text)',
           whiteSpace: 'pre',
         }}>
           {code}
@@ -431,7 +431,7 @@ function formatProblem(text) {
           const codeParts = bp.split(/(`[^`]+`)/g);
           return codeParts.map((cp, k) => {
             if (cp.startsWith('`') && cp.endsWith('`')) {
-              return <code key={k} style={{ fontFamily: 'var(--font-mono)', background: 'rgba(0,255,136,0.1)', padding: '1px 6px', borderRadius: 3, fontSize: 13, color: 'var(--accent)' }}>{cp.slice(1,-1)}</code>;
+              return <code key={k} style={{ fontFamily: 'var(--font-mono)', background: 'color-mix(in srgb, var(--accent) 10%, transparent)', padding: '1px 6px', borderRadius: 3, fontSize: 13, color: 'var(--accent)' }}>{cp.slice(1,-1)}</code>;
             }
             return <span key={k}>{cp}</span>;
           });

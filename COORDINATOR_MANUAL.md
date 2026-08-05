@@ -18,6 +18,53 @@
 
 ---
 
+## ⚔️ RUNNING CODE ARENA 2026 (Reboot Club format)
+
+Three missions on the same platform, 100 marks total. Enable via **Config tab → ⚔️ CODE ARENA 2026 template → Save** (sets: quiz 20 Q / 25 min / arena bank / 20 marks · Bug Hunt 5 programs / 30 min / 30 marks · Code Strike 45 min / 50 marks).
+
+### Timeline (per the event plan)
+| Activity | Time | Where |
+|---|---|---|
+| Registration & verification | 15 min | Setup tab (Bulk CSV Import + passcode cards from QR tab) |
+| Welcome & rules | 10 min | `/guide` on participant phones |
+| Mission 1 — Intelligence Scan | 25 min | Control → Advance to Phase 1 → 🧠 Quiz tab → Start |
+| Mission 2 — Bug Hunt | 30 min | Control → Advance → 🐛 Bug Hunt tab → Start |
+| Mission 3 — Code Strike | 45 min | Control → Advance → ⚔️ Code Strike tab → Start |
+| Leaderboard & tie breaker | 15 min | Control → Advance to Results → Dramatic Reveal (+ ⚡ Tie-Break tab if needed) |
+| Prize distribution | 10 min | Results tab → Thank You page |
+
+### Mission 1 — Intelligence Scan
+- Same Quiz Round flow as always; the template points it at the **multi-topic bank** (Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical) instead of the DSA pool.
+- Each member submits on their own phone; team score = member average, auto-normalised to **/20 marks** for the combined board.
+- "Top teams qualify" → use the existing **Eliminate Bottom N** control in the Quiz tab if you want cuts after M1 (optional — the combined leaderboard works without eliminating anyone).
+
+### Mission 2 — Bug Hunt
+- **One submission per team** (one laptop per team, per the rules). Teams type the corrected line for each buggy program.
+- **End & Grade** auto-grades with the lenient matcher (spacing/case/quotes don't matter). Then open the review panel: every team's typed fix is shown next to the accepted answers.
+- A correct fix written in an unexpected form? Type marks in the override box → **Set**. `↩ auto` restores the auto verdict. Totals update live everywhere.
+
+### Mission 3 — Code Strike
+- **Start** reveals all 3 problems (Easy 10 / Medium 15 / Hard 25) with the timer. Teams write code in their own editor and paste the final version per problem — resubmission allowed, latest paste counts and sets their submission time.
+- **End (lock submissions)** when time's up — judging continues after.
+- Judge panel: **View Code** per team per problem, enter **Correctness 0–10** and **Efficiency 0–10** → per-problem marks = 70% correctness + 20% efficiency + 10% time bonus (automatic). Judge notes under each problem tell evaluators what to look for. **Export CSV** for offline/parallel evaluation.
+
+### Tie Breaker
+- **⚡ Tie-Break tab** → tick the tied teams (list is sorted by current total so ties are obvious) → fire a random rapid-fire question or type your own + its answer.
+- The question pops up full-screen only on those teams' devices; the server timestamps every answer; **first correct answer wins**, announced on Spectator. The win (⚡) breaks the tie on the final leaderboard automatically.
+- Each team gets exactly one attempt per tie-break. Run it again with a new question if nobody gets it.
+
+### 🔒 Protected Mode (the "AI tools not allowed" rule, enforced)
+- Toggle it in the **Setup tab**. While ON, during **quiz, Bug Hunt and tie-breaks** every team browser blocks copy/paste + right-click, shows a red lockdown banner, and **reports every tab/app switch to you instantly** — toast + event log + a 🚨 counter on the team's row in the Teams tab (click it to see details or clear it).
+- **Code Strike is exempt on purpose** — teams must switch to their editor during it.
+- Honest limits: a browser cannot see a second phone or stop someone typing a question into ChatGPT on another device. Protected Mode catches everything on the event device and gives you evidence; volunteers walking the room cover the rest. Penalties are your call — use the existing Eliminate / mark-override tools.
+
+### Pauses & fixes
+- Every mission has its own Pause / Resume / ±minutes in its tab; **Emergency Pause** (Control tab) freezes whichever mission timer is live.
+- Pausing Code Strike shifts the time-bonus baseline, so paused minutes never cost teams their bonus.
+- Wrong grade discovered late? Bug Hunt overrides and Code Strike judge scores can be changed at any time — the combined board recomputes instantly.
+
+---
+
 ## SPEED DEMO PHASE (Sprint 3 — Optional)
 
 Enable in **Config tab** before starting the event (`speed_demo_enabled = true`).
