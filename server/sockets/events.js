@@ -6,6 +6,26 @@ import { buildClientState, sanitizeQuestion } from '../index.js';
 import { authAdmin, authZone } from '../lib/auth.js';
 import { archiveEvent, snapshotNow } from '../lib/snapshots.js';
 import { isAnswerCorrect } from '../lib/utils.js';
+import { pickTeamColor, generatePasscode, validateSelfRegistration } from '../lib/registration.js';
+
+// One shape for a brand-new team, used by BOTH the admin Setup tab and
+// the public self-registration QR flow so they can never diverge.
+function buildTeam(db, { name, year, members }) {
+  const passcode = generatePasscode(db.teams.map(t => t.passcode));
+  if (!passcode) return null; // all 9000 codes in use — impossible in practice
+  return {
+    id: uuid(), name, year: year || '2nd', members: members || [], passcode,
+    color: pickTeamColor(db.teams.map(t => t.color), db.teams.length),
+    battery: 100, is_eliminated: false, elimination_phase: null,
+    zones_captured: 0, zone_ids_captured: [],
+    phase1_scores: [], phase1_total_score: 0,
+    phase3_submission: null, phase3_judge_scores: null, phase3_problem: null,
+    quiz_score: 0, quiz_member_scores: {}, quiz_marks_scored: null,
+    bughunt_submission: null, bughunt_results: null, bughunt_score: null,
+    codestrike_submissions: {}, codestrike_judge: null, codestrike_score: null,
+    tiebreak_wins: 0, violations: null,
+  };
+}
 
 // Full admin power (Setup/Control/Reset/Backup/etc)
 const auth = (t) => authAdmin(t);
@@ -564,37 +584,10 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
         socket.emit('admin:error', { message: `Team "${name.trim()}" already exists!` });
         return;
       }
-      const colors = [
-        '#ef4444','#3b82f6','#22c55e','#f59e0b','#a855f7',
-        '#06b6d4','#f97316','#ec4899','#84cc16','#14b8a6',
-        '#e11d48','#7c3aed','#0891b2','#16a34a','#d97706',
-        '#fb7185','#38bdf8','#4ade80','#fbbf24','#c084fc',
-        '#22d3ee','#fb923c','#f472b6','#a3e635','#2dd4bf',
-        '#ff6b6b','#4ecdc4','#45b7d1','#96ceb4','#ffeaa7',
-        '#dda0dd','#98d8c8','#f7dc6f','#bb8fce','#85c1e9',
-        '#82e0aa','#f8c471','#f1948a','#aab7b8','#76d7c4',
-        '#ff9ff3','#feca57','#ff6348','#48dbfb','#ff9f43',
-        '#54a0ff','#5f27cd','#00d2d3','#01aaa4','#341f97',
-        '#2ecc71','#e74c3c','#9b59b6','#1abc9c','#f39c12',
-      ];
-      const usedColors = db.teams.map(t => t.color);
-      const color = colors.find(c => !usedColors.includes(c)) || `hsl(${(db.teams.length * 37) % 360},65%,55%)`;
-      let passcode;
-      do {
-        passcode = Math.floor(1000 + Math.random() * 9000).toString();
-          } while (db.teams.some(t => t.passcode === passcode));
-      const team = {
-        id: uuid(), name: name.trim(), year: year || '2nd',
-        members: members || [], passcode, color,
-        battery: 100, is_eliminated: false, elimination_phase: null,
-        zones_captured: 0, zone_ids_captured: [],
-        phase1_scores: [], phase1_total_score: 0,
-        phase3_submission: null, phase3_judge_scores: null, phase3_problem: null,
-        quiz_score: 0, quiz_member_scores: {}, quiz_marks_scored: null,
-        bughunt_submission: null, bughunt_results: null, bughunt_score: null,
-        codestrike_submissions: {}, codestrike_judge: null, codestrike_score: null,
-        tiebreak_wins: 0, violations: null,
-      };
+      // Shared with the self-registration flow (lib/registration.js) so an
+      // admin-made team and a QR-made team are byte-for-byte the same shape.
+      const team = buildTeam(db, { name: name.trim(), year, members });
+      if (!team) { socket.emit('admin:error', { message: 'No passcodes left — delete an unused team first.' }); return; }
       db.teams.push(team);
       await saveDBNow(); // Critical: team registration must persist immediately
       // FIX V7.1: emit only the new team to all clients (not full state:sync which
@@ -1325,6 +1318,11 @@ startBatteryDrain(db, io, saveDB);
         // Custom theme is set live from the Theme tab (its own event) —
         // preserve it across config saves too.
         theme: db.app_state.event_config?.theme ?? null,
+        // Self-registration is toggled from the Setup tab (its own event)
+        self_registration: config.self_registration !== undefined ? !!config.self_registration : !!db.app_state.event_config?.self_registration,
+        self_registration_max_teams: config.self_registration_max_teams !== undefined
+          ? Math.max(0, Math.min(500, parseInt(config.self_registration_max_teams) || 0))
+          : (db.app_state.event_config?.self_registration_max_teams ?? 0),
         // BUG FIX: custom_questions wasn't included here either — every
         // config save silently deleted every custom question the admin
         // had added, with no warning.
@@ -2184,6 +2182,64 @@ startBatteryDrain(db, io, saveDB);
       emitStateDelta(io, { event_config: db.app_state.event_config });
       io.emit('toast:broadcast', { message: clean ? '🎨 Event theme updated' : '🎨 Theme reset to default', type: 'info' });
       log(io, db, 'config', clean ? `🎨 Custom theme applied (${Object.keys(clean).join(', ')})` : '🎨 Theme reset to default');
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // SELF-REGISTRATION — team leaders scan the QR and create their own
+    // team at /register. This is IN ADDITION to admin registration in
+    // the Setup tab, which is untouched. It is closed by default: the
+    // admin opens it at the desk and closes it once everyone is in, so
+    // a public endpoint is never sitting open during the event itself.
+    // ═══════════════════════════════════════════════════════════════
+    socket.on('admin:set_self_registration', async ({ enabled, max_teams, admin_token }) => {
+      if (!auth(admin_token)) return;
+      db.app_state.event_config.self_registration = !!enabled;
+      if (max_teams !== undefined) {
+        db.app_state.event_config.self_registration_max_teams = Math.max(0, Math.min(500, parseInt(max_teams) || 0));
+      }
+      await saveDBNow();
+      emitStateDelta(io, { event_config: db.app_state.event_config });
+      io.emit('toast:broadcast', {
+        message: enabled ? '📝 Team self-registration is OPEN' : '🔒 Team self-registration is CLOSED',
+        type: enabled ? 'success' : 'info',
+      });
+      log(io, db, 'config', enabled ? '📝 Self-registration opened' : '🔒 Self-registration closed');
+    });
+
+    socket.on('team:self_register', async ({ name, year, members }) => {
+      // Public endpoint: rate-limited per socket, and only live while the
+      // admin has registration open.
+      if (!rateLimit(socket.id, 'team:self_register', 4000)) {
+        socket.emit('team:self_register_result', { ok: false, message: 'Slow down a moment, then try again.' });
+        return;
+      }
+      if (!db.app_state.event_config?.self_registration) {
+        socket.emit('team:self_register_result', { ok: false, message: 'Registration is closed — please see a coordinator.' });
+        return;
+      }
+      const check = validateSelfRegistration({ name, year, members }, db.teams, db.app_state.event_config);
+      if (!check.ok) {
+        socket.emit('team:self_register_result', { ok: false, message: check.error });
+        return;
+      }
+      const team = buildTeam(db, check.value);
+      if (!team) {
+        socket.emit('team:self_register_result', { ok: false, message: 'Registration is full — please see a coordinator.' });
+        return;
+      }
+      db.teams.push(team);
+      await saveDBNow();
+
+      // Public delta for every screen (no passcode, same as admin path)
+      const { passcode: _hidden, members: _m, phase1_scores: _p, ...publicTeam } = team;
+      io.emit('team:new', publicTeam);
+      // The passcode goes ONLY to the device that just registered
+      socket.emit('team:self_register_result', {
+        ok: true,
+        team: { id: team.id, name: team.name, color: team.color, year: team.year, passcode: team.passcode },
+      });
+      io.emit('toast:broadcast', { message: `📝 ${team.name} registered (${team.members.length} member${team.members.length !== 1 ? 's' : ''})`, type: 'success' });
+      log(io, db, 'registration', `📝 ${team.name} self-registered — ${team.members.join(', ')}`, team.id);
     });
 
     // Admin can reset a team's counter (e.g. after a warning or a

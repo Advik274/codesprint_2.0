@@ -124,6 +124,11 @@ export const EMPTY_DB = () => ({
       // team browsers block copy/paste + right-click and every tab/app
       // switch is recorded and reported to admin as a violation.
       protected_mode: false,
+      // Self-registration: when open, team leaders can scan the QR and
+      // create their own team at /register. Off by default — the admin
+      // opens it at the registration desk and closes it when done.
+      self_registration: false,
+      self_registration_max_teams: 0, // 0 = no cap
       // V7: Custom Questions
       custom_questions: [],
     },
@@ -188,6 +193,8 @@ function patchDB() {
   if (s.event_config.codestrike_marks === undefined) s.event_config.codestrike_marks = 50;
   if (s.event_config.protected_mode === undefined) s.event_config.protected_mode = false;
   if (s.event_config.theme === undefined) s.event_config.theme = null;
+  if (s.event_config.self_registration === undefined) s.event_config.self_registration = false;
+  if (s.event_config.self_registration_max_teams === undefined) s.event_config.self_registration_max_teams = 0;
   // CODE ARENA: app_state defaults
   if (s.bughunt_active === undefined) s.bughunt_active = false;
   if (s.bughunt_timer_end === undefined) s.bughunt_timer_end = null;

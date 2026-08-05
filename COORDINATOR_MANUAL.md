@@ -53,6 +53,18 @@ Three missions on the same platform, 100 marks total. Enable via **Config tab �
 - The question pops up full-screen only on those teams' devices; the server timestamps every answer; **first correct answer wins**, announced on Spectator. The win (⚡) breaks the tie on the final leaderboard automatically.
 - Each team gets exactly one attempt per tie-break. Run it again with a new question if nobody gets it.
 
+### 📝 Registration desk: QR self-registration (optional)
+Speeds up the 15-minute registration slot when you have a lot of teams — and it doesn't replace anything: typing teams in yourself and the Bulk CSV Import both still work exactly as before.
+
+1. **Setup tab → 📝 Open Registration.** A QR appears next to the button (also in QR & Cards, printable).
+2. Project the QR, or print a couple of copies for the desk queue.
+3. Each **team leader** scans it → fills in team name, year and members → taps Register.
+4. Their **passcode is shown on their screen immediately** (they're told to screenshot it); the rest of the team joins with that code as usual.
+5. The team and its passcode appear in your Teams list **live** — no refresh needed.
+6. **Close Registration** when the desk shuts. The page then tells latecomers to see a coordinator.
+
+Guardrails: duplicate team names are rejected (case-insensitive), members are capped at 6, and the page is inert while registration is closed. Set a team cap if you need one. Verify your headcount against the Teams tab before starting Mission 1 — a team that fat-fingers its name can be renamed or deleted there.
+
 ### 🔒 Protected Mode (the "AI tools not allowed" rule, enforced)
 - Toggle it in the **Setup tab**. While ON, during **quiz, Bug Hunt and tie-breaks** every team browser blocks copy/paste + right-click, shows a red lockdown banner, and **reports every tab/app switch to you instantly** — toast + event log + a 🚨 counter on the team's row in the Teams tab (click it to see details or clear it).
 - **Code Strike is exempt on purpose** — teams must switch to their editor during it.

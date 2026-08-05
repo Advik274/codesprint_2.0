@@ -4,6 +4,7 @@ import { AppProvider, useApp } from './context/AppContext';
 import { AnnouncementOverlay } from './components/shared/Announcement.jsx';
 import { MasterPauseOverlay } from './components/shared/MasterPause.jsx';
 import JoinTeam from './pages/JoinTeam';
+import SelfRegister from './pages/SelfRegister';
 import TeamDashboard from './pages/TeamDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import Spectator from './pages/Spectator';
@@ -69,6 +70,7 @@ export default function App() {
         <RootLayout>
           <Routes>
             <Route path="/" element={<JoinTeam />} />
+            <Route path="/register" element={<SelfRegister />} />
             <Route path="/team/:teamId" element={<TeamDashboard />} />
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/spectator" element={<Spectator />} />

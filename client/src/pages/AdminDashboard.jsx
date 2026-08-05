@@ -113,6 +113,18 @@ export default function AdminDashboard() {
     getSocket().emit('admin:request_passcodes', { admin_token: sessionStorage.getItem('admin_session') || '' });
   }, [authed]);
 
+  // Teams can now also appear from the self-registration QR, which the
+  // admin never clicked — re-pull the passcode list whenever any team is
+  // added so a self-registered team's code shows up immediately instead
+  // of as a "—" until the page is refreshed.
+  useEffect(() => {
+    if (!authed) return;
+    const socket = getSocket();
+    const refresh = () => socket.emit('admin:request_passcodes', { admin_token: sessionStorage.getItem('admin_session') || '' });
+    socket.on('team:new', refresh);
+    return () => socket.off('team:new', refresh);
+  }, [authed]);
+
   // If the currently open tab belongs to a phase that just got disabled in
   // Config, fall back to Setup instead of stranding the admin on a tab
   // that no longer exists. (Must live before the early return — hooks rule.)
@@ -444,6 +456,57 @@ export default function AdminDashboard() {
                       style={{ padding:'14px 26px', fontSize:15, flexShrink:0 }}>
                       {pmOn?'🔓 Disable':'🔒 Enable Protected Mode'}
                     </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── 📝 SELF-REGISTRATION (QR) ─────────────────────── */}
+            {(()=>{
+              const srOn = !!state.app_state?.event_config?.self_registration;
+              const regUrl = `${window.location.origin}/register`;
+              return (
+                <div className="card card-lg" style={{ border:`1px solid ${srOn?'var(--accent)':'var(--border)'}` }}>
+                  <div style={{ display:'flex', gap:20, flexWrap:'wrap', alignItems:'flex-start' }}>
+                    <div style={{ flex:1, minWidth:260 }}>
+                      <h2 style={{ fontFamily:'var(--font-display)', fontSize:18, color:srOn?'var(--accent)':'var(--text2)', marginBottom:6 }}>
+                        {srOn?'📝':'🔒'} TEAM SELF-REGISTRATION {srOn?'— OPEN':''}
+                      </h2>
+                      <div style={{ fontSize:13, color:'var(--text2)', lineHeight:1.6, marginBottom:10 }}>
+                        Project or print the QR — a team leader scans it, fills in their team name, year and members,
+                        and gets a passcode instantly. Teams appear in your list below as they register.
+                        This runs <strong>alongside</strong> manual registration; both still work.
+                      </div>
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginBottom:12, wordBreak:'break-all' }}>
+                        {regUrl}
+                      </div>
+                      <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                        <button
+                          onClick={()=>emit('admin:set_self_registration',{ enabled: !srOn })}
+                          className={srOn?'btn-danger':'btn-primary'}
+                          style={{ padding:'12px 22px', fontSize:14 }}>
+                          {srOn?'🔒 Close Registration':'📝 Open Registration'}
+                        </button>
+                        <a href="/register" target="_blank" rel="noreferrer" className="btn-ghost"
+                          style={{ padding:'12px 18px', fontSize:12, textDecoration:'none', display:'inline-block' }}>
+                          Preview page ↗
+                        </a>
+                        <span style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)' }}>
+                          {state.teams.length} team{state.teams.length!==1?'s':''} registered
+                        </span>
+                      </div>
+                      {!srOn && (
+                        <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:8 }}>
+                          Closed by default. Open it at the desk, close it once everyone is in.
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign:'center', flexShrink:0, opacity: srOn?1:0.35 }}>
+                      <QRImage text={regUrl} size={150} />
+                      <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:srOn?'var(--accent)':'var(--text3)' }}>
+                        {srOn?'SCAN TO REGISTER':'CLOSED'}
+                      </div>
+                    </div>
                   </div>
                 </div>
               );
@@ -1857,8 +1920,12 @@ function QRTab({ state }) {
   const passcodeCache = state.passcodeCache || {};
   const [section, setSection] = useState('qr'); // 'qr' | 'cards'
 
+  const selfRegOpen = !!state.app_state?.event_config?.self_registration;
   const cards = [
     { label: 'Team Join', path: '/', color: 'var(--accent)', icon: '🎯' },
+    { label: selfRegOpen ? 'Self-Registration' : 'Self-Registration (closed)',
+      sublabel: 'Team leader scans to register',
+      path: '/register', color: 'var(--warning)', icon: '📝' },
     { label: 'Spectator', path: '/spectator', color: 'var(--info)', icon: '👁' },
     ...state.zones.map(z => ({
       label: z.name, sublabel: z.location, path: `/zone/${z.id}`, color: 'var(--warning)', icon: '🗺️'

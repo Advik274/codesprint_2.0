@@ -95,6 +95,17 @@ export default function JoinTeam() {
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginTop: 6, textAlign: 'center' }}>
                   Ask your team coordinator for the code
                 </div>
+                {/* Only surfaced while the admin has self-registration open */}
+                {state.app_state?.event_config?.self_registration && (
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+                    <div style={{ fontSize: 12.5, color: 'var(--text2)', marginBottom: 8 }}>Team not registered yet?</div>
+                    <a href="/register" style={{
+                      display: 'inline-block', padding: '9px 18px', borderRadius: 6,
+                      border: '1px solid var(--accent)', color: 'var(--accent)',
+                      fontFamily: 'var(--font-mono)', fontSize: 12.5, textDecoration: 'none',
+                    }}>📝 Register your team →</a>
+                  </div>
+                )}
               </div>
               {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 16, textAlign: 'center' }}>{error}</div>}
               <button className="btn-primary" onClick={handleLookup} disabled={loading || passcode.length < 4} style={{ width: '100%', padding: '14px', fontSize: 16 }}>
