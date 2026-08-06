@@ -145,6 +145,7 @@ export const EMPTY_DB = () => ({
       // Code Strike anti-AI: code is written in the platform with paste
       // blocked, and the round stops being exempt from Protected Mode.
       codestrike_strict_mode: true,
+      codestrike_default_efficiency: 7,
       // V7: Custom Questions
       custom_questions: [],
     },
@@ -217,6 +218,7 @@ function patchDB() {
   if (s.event_config.penalty_marks_each === undefined) s.event_config.penalty_marks_each = 2;
   if (s.event_config.penalty_max === undefined) s.event_config.penalty_max = 10;
   if (s.event_config.codestrike_strict_mode === undefined) s.event_config.codestrike_strict_mode = true;
+  if (s.event_config.codestrike_default_efficiency === undefined) s.event_config.codestrike_default_efficiency = 7;
   // CODE ARENA: app_state defaults
   if (s.bughunt_active === undefined) s.bughunt_active = false;
   if (s.bughunt_timer_end === undefined) s.bughunt_timer_end = null;
@@ -516,7 +518,14 @@ httpServer.listen(PORT, '0.0.0.0', () => {
 // to a non-admin socket (answer, accepted variants, hints, judge notes).
 export function sanitizeQuestion(q) {
   if (!q || typeof q !== 'object') return q;
-  const { answer, answers, hint, judge_notes, ...safe } = q;
+  const { answer, answers, hint, judge_notes, drivers, tests, ...safe } = q;
+  // Code Strike problems carry hidden test cases WITH their expected
+  // outputs, plus the driver source. Shipping those to a team would hand
+  // them the answers to hardcode — only the visible samples go out.
+  if (Array.isArray(tests)) {
+    safe.tests = tests.filter(t => t.sample).map(t => ({ input: t.input, expected: t.expected, sample: true }));
+    safe.hidden_test_count = tests.filter(t => !t.sample).length;
+  }
   return safe;
 }
 

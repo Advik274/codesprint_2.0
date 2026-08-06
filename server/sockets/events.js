@@ -9,6 +9,7 @@ import { isAnswerCorrect } from '../lib/utils.js';
 import { pickTeamColor, generatePasscode, validateSelfRegistration, LIMITS } from '../lib/registration.js';
 import { recordFailure, isBlocked, clearKey, PASSCODE_LIMITS } from '../lib/ratelimit.js';
 import { assessSubmission, describeIntegrity } from '../lib/integrity.js';
+import { runTests, correctnessFromTests, judgeStatus } from '../lib/judge.js';
 
 // One shape for a brand-new team, used by BOTH the admin Setup tab and
 // the public self-registration QR flow so they can never diverge.
@@ -2035,6 +2036,11 @@ startBatteryDrain(db, io, saveDB);
     // sets the submission time). Judges score correctness/efficiency;
     // the time bonus is computed server-side.
     // ═══════════════════════════════════════════════════════════════
+    socket.on('admin:judge_status', async ({ admin_token }) => {
+      if (!auth(admin_token)) return;
+      socket.emit('admin:judge_status', await judgeStatus());
+    });
+
     socket.on('admin:start_codestrike', async ({ admin_token }) => {
       if (!auth(admin_token)) return;
       if (db.app_state.current_phase !== 'code_strike') return;
@@ -2072,7 +2078,7 @@ startBatteryDrain(db, io, saveDB);
       log(io, db, 'codestrike', `⚔️ Code Strike started — ${problems.length} problems, ${durationMin} min`);
     });
 
-    socket.on('codestrike:submit_code', ({ problem_id, code, language, keystrokes, paste_blocked, typing_ms }) => {
+    socket.on('codestrike:submit_code', async ({ problem_id, code, language, keystrokes, paste_blocked, typing_ms }) => {
       if (!rateLimit(socket.id, 'codestrike:submit', 2000)) return;
       if (!db.app_state.codestrike_active) {
         socket.emit('codestrike:submit_result', { ok: false, message: 'Code Strike is not accepting submissions right now.' });
@@ -2109,14 +2115,73 @@ startBatteryDrain(db, io, saveDB);
           prev?.typing_ms || 0,
         ),
       };
+      // Auto-grade against ALL tests, hidden ones included. Correctness
+      // stops being a judge's opinion and becomes tests-passed; judges
+      // are left with efficiency and any override they want to make.
+      let auto = null;
+      const graded = await runTests(problem, language, cleanCode, { samplesOnly: false });
+      if (graded.available) {
+        auto = {
+          passed: graded.passed, total: graded.total,
+          stage: graded.stage, error: graded.error || null,
+          correctness: correctnessFromTests(graded.passed, graded.total),
+          // Only the pass/fail flags go back — never the hidden inputs
+          // or their expected outputs.
+          per_test: (graded.results || []).map(r => ({ sample: r.sample, passed: r.passed })),
+        };
+        team.codestrike_submissions[problem_id].auto = auto;
+        if (!team.codestrike_judge) team.codestrike_judge = {};
+        const existing = team.codestrike_judge[problem_id];
+        team.codestrike_judge[problem_id] = {
+          correctness: auto.correctness,
+          // Efficiency still needs a human read; everyone starts from the
+          // same neutral figure so an unreviewed team is neither
+          // rewarded nor punished.
+          efficiency: existing && existing.auto === false ? existing.efficiency : (db.app_state.event_config?.codestrike_default_efficiency ?? 7),
+          auto: true,
+        };
+        team.codestrike_score = calcCodeStrikeTotal(
+          team, db.app_state.codestrike_problems || [],
+          db.app_state.codestrike_started_at, db.app_state.codestrike_duration_ms,
+          db.app_state.event_config?.codestrike_marks ?? 50
+        );
+        io.emit('team:delta', { id: team.id, codestrike_score: team.codestrike_score });
+      }
+
       saveDB();
       const submitted = Object.fromEntries(
         Object.entries(team.codestrike_submissions).map(([pid, sub]) => [pid, sub.submitted_at])
       );
-      socket.emit('codestrike:submit_result', { ok: true, problem_id, submitted_at: team.codestrike_submissions[problem_id].submitted_at, resubmit: !!prev });
+      socket.emit('codestrike:submit_result', {
+        ok: true, problem_id,
+        submitted_at: team.codestrike_submissions[problem_id].submitted_at,
+        resubmit: !!prev, auto,
+      });
       io.emit('team:delta', { id: team.id, codestrike_submitted: submitted });
       if (!prev) io.emit('toast:broadcast', { message: `⚔️ ${team.name} submitted "${problem.title}"!`, type: 'success' });
       log(io, db, 'codestrike', `⚔️ ${team.name} ${prev ? 're-submitted' : 'submitted'} ${problem.title}`, team.id);
+    });
+
+    // Run a team's function against the VISIBLE samples only. This is
+    // what makes strict mode workable: teams can test their logic in the
+    // platform instead of needing an external editor to run code.
+    socket.on('codestrike:run_samples', async ({ problem_id, code, language }) => {
+      if (!rateLimit(socket.id, 'codestrike:run', 4000)) {
+        socket.emit('codestrike:run_result', { ok: false, error: 'Give it a few seconds between runs.' });
+        return;
+      }
+      if (!db.app_state.codestrike_active) return;
+      const team_id = boundTeam(socket.id);
+      const team = team_id && db.teams.find(t => t.id === team_id);
+      if (!team || team.is_eliminated) return;
+      const problem = (db.app_state.codestrike_problems || []).find(p => p.id === problem_id);
+      if (!problem) return;
+      if (typeof code !== 'string' || !code.trim()) {
+        socket.emit('codestrike:run_result', { problem_id, ok: false, error: 'Write some code first.' });
+        return;
+      }
+      const out = await runTests(problem, language, code.slice(0, 20000), { samplesOnly: true });
+      socket.emit('codestrike:run_result', { problem_id, ...out });
     });
 
     socket.on('admin:end_codestrike', async ({ admin_token }) => {
@@ -2141,6 +2206,7 @@ startBatteryDrain(db, io, saveDB);
       team.codestrike_judge[problem_id] = {
         correctness: Math.max(0, Math.min(10, Number(correctness) || 0)),
         efficiency: Math.max(0, Math.min(10, Number(efficiency) || 0)),
+        auto: false, // a human set this — auto-grading must not overwrite it
       };
       team.codestrike_score = calcCodeStrikeTotal(
         team, problems,

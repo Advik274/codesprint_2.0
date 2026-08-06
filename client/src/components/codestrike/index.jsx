@@ -3,7 +3,9 @@ import { getSocket } from '../../hooks/useSocket';
 import { CountdownTimer } from '../shared/index.jsx';
 
 const DIFF_COLORS = { easy: 'var(--accent)', medium: 'var(--warning)', hard: 'var(--danger)', extreme: 'var(--danger)' };
-const LANGUAGES = ['python', 'java', 'cpp', 'c', 'javascript', 'other'];
+// Only languages the judge can actually compile and run
+const LANGUAGES = [['python', 'Python'], ['cpp', 'C++'], ['java', 'Java']];
+const LANGS_ALL = LANGUAGES.map(([k]) => k);
 
 // ── CodeStrikeRound — team view (Mission 3) ──────────────────────
 // Problems revealed with a live timer. Teams write code in their own
@@ -95,8 +97,23 @@ export function CodeStrikeRound({ teamId, state }) {
 
 // One problem: statement + samples + code box + submit
 function ProblemCard({ problem: p, submittedAt, strict }) {
-  const [code, setCode] = useState('');
+  // LeetCode-style: the team implements one function and the platform
+  // supplies the driver, so the editor starts from the stub for the
+  // chosen language rather than an empty box.
+  const starterFor = (lang) => p.starters?.[lang] || '';
   const [language, setLanguage] = useState('python');
+  const [code, setCode] = useState(() => starterFor('python'));
+  const [runResult, setRunResult] = useState(null);
+  const [running, setRunning] = useState(false);
+
+  // Switching language swaps in that language's stub, unless they've
+  // already written something they'd lose.
+  const switchLanguage = (lang) => {
+    const untouched = !code.trim() || LANGS_ALL.some(l => code.trim() === starterFor(l).trim());
+    setLanguage(lang);
+    if (untouched) setCode(starterFor(lang));
+    setRunResult(null);
+  };
   const [expanded, setExpanded] = useState(true);
   const [status, setStatus] = useState(null); // { ok, message }
   const [loading, setLoading] = useState(false);
@@ -140,6 +157,25 @@ function ProblemCard({ problem: p, submittedAt, strict }) {
     socket.on('codestrike:submit_result', onResult);
     return () => socket.off('codestrike:submit_result', onResult);
   }, [p.id]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onRun = (d) => {
+      if (d.problem_id && d.problem_id !== p.id) return;
+      setRunning(false);
+      setRunResult(d);
+    };
+    socket.on('codestrike:run_result', onRun);
+    return () => socket.off('codestrike:run_result', onRun);
+  }, [p.id]);
+
+  const runSamples = () => {
+    if (!code.trim()) return;
+    setRunResult(null);
+    setRunning(true);
+    getSocket().emit('codestrike:run_samples', { problem_id: p.id, code, language });
+    setTimeout(() => setRunning(false), 25000);
+  };
 
   const submit = () => {
     if (!code.trim()) return;
@@ -210,9 +246,9 @@ function ProblemCard({ problem: p, submittedAt, strict }) {
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: strict ? 'var(--danger)' : 'var(--text3)' }}>
                 {strict ? '⌨️ TYPE YOUR SOLUTION HERE — PASTING IS DISABLED' : 'PASTE YOUR FINAL CODE'}
               </div>
-              <select value={language} onChange={e => setLanguage(e.target.value)}
+              <select value={language} onChange={e => switchLanguage(e.target.value)}
                 style={{ fontFamily: 'var(--font-mono)', fontSize: 12, background: 'var(--bg3)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px' }}>
-                {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+                {LANGUAGES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
               </select>
             </div>
             <textarea
@@ -238,8 +274,48 @@ function ProblemCard({ problem: p, submittedAt, strict }) {
                 {status.ok ? '✅' : '❌'} {status.message}
               </div>
             )}
+            {runResult && (
+              <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 6, border: `1px solid ${runResult.ok && runResult.passed === runResult.total ? 'var(--accent)' : 'var(--danger)'}`, background: 'var(--bg3)' }}>
+                {runResult.available === false ? (
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--warning)' }}>
+                    ⚠️ The code runner is unavailable — you can still submit; a judge will review it manually.
+                  </div>
+                ) : runResult.stage === 'compile' ? (
+                  <>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--danger)', marginBottom: 6 }}>❌ Did not compile</div>
+                    <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text2)', whiteSpace: 'pre-wrap', margin: 0, maxHeight: 160, overflowY: 'auto' }}>{runResult.error}</pre>
+                  </>
+                ) : runResult.stage === 'timeout' || runResult.stage === 'runtime' ? (
+                  <>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--danger)', marginBottom: 6 }}>
+                      {runResult.stage === 'timeout' ? '⏱ Too slow' : '💥 Crashed'}
+                    </div>
+                    <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text2)', whiteSpace: 'pre-wrap', margin: 0, maxHeight: 160, overflowY: 'auto' }}>{runResult.error}</pre>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: runResult.passed === runResult.total ? 'var(--accent)' : 'var(--danger)', marginBottom: 8 }}>
+                      {runResult.passed === runResult.total ? '✅' : '❌'} {runResult.passed}/{runResult.total} sample{runResult.total !== 1 ? 's' : ''} passed
+                      {p.hidden_test_count > 0 && <span style={{ color: 'var(--text3)' }}> · {p.hidden_test_count} hidden test{p.hidden_test_count !== 1 ? 's' : ''} run on submit</span>}
+                    </div>
+                    {(runResult.results || []).map((r, i) => (
+                      <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: r.passed ? 'var(--accent)' : 'var(--danger)', marginBottom: 3 }}>
+                        {r.passed ? '✓' : '✗'} input <span style={{ color: 'var(--text2)' }}>{JSON.stringify(r.input)}</span>
+                        {!r.passed && <> → expected <span style={{ color: 'var(--text)' }}>{r.expected}</span>, got <span style={{ color: 'var(--text)' }}>{r.got || '(nothing)'}</span></>}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button className="btn-ghost" onClick={runSamples} disabled={running || !code.trim()}
+                style={{ flex: 1, padding: 12, fontSize: 13 }}>
+                {running ? 'Running…' : '▶ Run Samples'}
+              </button>
+            </div>
             <button className="btn-primary" onClick={submit} disabled={loading || !code.trim()}
-              style={{ width: '100%', padding: 12, fontSize: 14, marginTop: 10 }}>
+              style={{ width: '100%', padding: 12, fontSize: 14, marginTop: 8 }}>
               {loading ? 'Submitting...' : submittedAt ? `Re-submit ${p.title}` : `Submit ${p.title}`}
             </button>
             {submittedAt && (

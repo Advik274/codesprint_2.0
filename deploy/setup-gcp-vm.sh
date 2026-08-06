@@ -64,6 +64,34 @@ say "Installing dependencies and building the client"
 (cd "$APP_DIR/client" && npm install --no-audit --no-fund --silent && npm run build --silent)
 ok "client built to client/dist"
 
+# ── 4b. Code judge (Piston) ───────────────────────────────────────
+# Runs submitted code in a sandbox so Mission 3 can be auto-graded. The
+# app degrades to manual judging if this is missing, so a failure here is
+# not fatal — but auto-grading is worth having.
+if [ "${SKIP_JUDGE:-0}" != "1" ]; then
+  say "Setting up the code judge (Piston)"
+  if ! command -v docker >/dev/null 2>&1; then
+    curl -fsSL https://get.docker.com | sudo sh >/dev/null
+    sudo usermod -aG docker "$USER" || true
+  fi
+  if ! sudo docker ps --format '{{.Names}}' | grep -q '^piston_api$'; then
+    sudo docker run -d --name piston_api --restart unless-stopped       --privileged -p 2000:2000       -v piston_packages:/piston/packages       ghcr.io/engineer-man/piston >/dev/null
+    sleep 12
+  fi
+  # Install the three languages teams can submit in (idempotent).
+  for pkg in "python 3.12.0" "gcc 10.2.0" "java 15.0.2"; do
+    set -- $pkg
+    sudo docker exec piston_api /bin/sh -c       "curl -s -XPOST http://127.0.0.1:2000/api/v2/packages -H 'Content-Type: application/json' -d '{\"language\":\"$1\",\"version\":\"$2\"}'" >/dev/null 2>&1 || true
+  done
+  sleep 5
+  if curl -fsS --max-time 8 http://localhost:2000/api/v2/runtimes | grep -q python; then
+    ok "judge ready — $(curl -fsS http://localhost:2000/api/v2/runtimes | grep -o '"language":"[^"]*"' | sort -u | wc -l) language(s) installed"
+  else
+    echo "  ! judge not responding yet — Mission 3 will fall back to manual judging."
+    echo "    Check later with:  curl localhost:2000/api/v2/runtimes"
+  fi
+fi
+
 # ── 5. systemd service ────────────────────────────────────────────
 # WorkingDirectory must be server/ — the DB path is relative to it.
 # CAP_NET_BIND_SERVICE lets a non-root process bind port 80, which
@@ -129,6 +157,7 @@ fi
 cat <<EOF
 
   Deploy a change   cd $APP_DIR && ./deploy/update.sh
+  Judge status      curl localhost:2000/api/v2/runtimes
   Live logs         sudo journalctl -u $SERVICE -f
   Restart           sudo systemctl restart $SERVICE
 

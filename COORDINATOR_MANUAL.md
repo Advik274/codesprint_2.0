@@ -54,6 +54,13 @@ Load these exact numbers in one click: **Config → ⚔️ CODE ARENA 2026 templ
 
 ### Mission 3 — Code Strike
 ⚠️ **Strict mode is on by default — this is the anti-AI setting.** Solutions are **typed in the platform** (pasting is blocked), and Code Strike is no longer exempt from Protected Mode, so leaving the tab counts as a violation like every other round. Fetching an answer from an AI therefore costs a tab switch *and* has to be retyped by hand.
+**Auto-grading (Mission 3).** Teams implement one function; the platform supplies the driver that reads input and calls it. Submissions run against test cases automatically — correctness is *tests passed*, not a judge's opinion.
+- Teams get a **▶ Run Samples** button that runs the visible cases in-platform. That is what makes typed-only workable: they can test without an editor and without leaving the tab.
+- Hidden tests run on submit. Teams never see hidden inputs or expected outputs.
+- **Judges are left with efficiency only** (defaulting to 7/10) plus any override. 80 judgements becomes a handful of reads.
+- Check the judge before the round: **Code Strike tab → judge status**, or `curl localhost:2000/api/v2/runtimes` on the VM.
+- **If the judge is down the event carries on** — submissions are stored and the manual judge panel works exactly as before. Nothing blocks.
+
 - Judges see how much of each solution was actually typed. A flagged line — `🚩 not typed here — only 12 keystrokes for 1212 chars` — means the code did not come from that keyboard. **Ask that team to explain their solution before scoring it**; the signal tells you where to look, it does not prove anything on its own.
 - Teams cannot run their code in strict mode, so score the *approach*: a correct algorithm with a small syntax slip should not be marked as wrong.
 - Switch to **Open mode** in Config → Code Strike Settings if you would rather let teams use their own editor (the original behaviour, with no tab-switch detection during this round).
