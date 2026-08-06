@@ -8,6 +8,7 @@ import { archiveEvent, snapshotNow } from '../lib/snapshots.js';
 import { isAnswerCorrect } from '../lib/utils.js';
 import { pickTeamColor, generatePasscode, validateSelfRegistration, LIMITS } from '../lib/registration.js';
 import { recordFailure, isBlocked, clearKey, PASSCODE_LIMITS } from '../lib/ratelimit.js';
+import { assessSubmission, describeIntegrity } from '../lib/integrity.js';
 
 // One shape for a brand-new team, used by BOTH the admin Setup tab and
 // the public self-registration QR flow so they can never diverge.
@@ -1371,6 +1372,7 @@ startBatteryDrain(db, io, saveDB);
         penalty_free_violations: Math.max(0, Math.min(10, parseInt(config.penalty_free_violations ?? db.app_state.event_config?.penalty_free_violations ?? 2))),
         penalty_marks_each: Math.max(0, Math.min(25, parseFloat(config.penalty_marks_each ?? db.app_state.event_config?.penalty_marks_each ?? 2))),
         penalty_max: Math.max(0, Math.min(100, parseFloat(config.penalty_max ?? db.app_state.event_config?.penalty_max ?? 10))),
+        codestrike_strict_mode: config.codestrike_strict_mode !== undefined ? !!config.codestrike_strict_mode : (db.app_state.event_config?.codestrike_strict_mode !== false),
         // BUG FIX: custom_questions wasn't included here either — every
         // config save silently deleted every custom question the admin
         // had added, with no warning.
@@ -1903,6 +1905,32 @@ startBatteryDrain(db, io, saveDB);
       log(io, db, 'bughunt', `Override: ${team.name} / ${program_id} → ${overrides[program_id] ?? 'auto'}`);
     });
 
+    // A team's Bug Hunt submission locks on first send (one laptop per
+    // team). Every joined device shows the form though, so a nervous
+    // member tapping Submit on their phone could lock the whole team out
+    // with a half-finished answer and there was no way back. This is the
+    // undo — it clears their submission so they can work and submit
+    // again, and is logged so the reopen is on the record.
+    socket.on('admin:reopen_bughunt', async ({ team_id, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team) return;
+      if (!team.bughunt_submission) {
+        socket.emit('admin:error', { message: `${team.name} has not submitted yet — nothing to reopen.` });
+        return;
+      }
+      const had = Object.keys(team.bughunt_submission.answers || {}).length;
+      team.bughunt_submission = null;
+      team.bughunt_results = null;
+      team.bughunt_score = null;
+      await saveDBNow();
+      io.emit('team:delta', { id: team.id, bughunt_score: null, bughunt_submitted_at: null, bughunt_per_program: null });
+      io.to(`team_${team.id}`).emit('bughunt:reopened', {});
+      io.to(`team_${team.id}`).emit('toast:broadcast', { message: '🔓 Your Bug Hunt submission was reopened — you can edit and submit again.', type: 'warning' });
+      socket.emit('admin:bughunt_reopened', { team_id, team_name: team.name });
+      log(io, db, 'bughunt', `🔓 Admin reopened ${team.name}'s Bug Hunt submission (${had} fixes discarded)`, team.id);
+    });
+
     // Pull-only review data for the admin panel: every team's typed
     // fixes next to the expected answers — never broadcast.
     socket.on('admin:request_bughunt_review', ({ admin_token }) => {
@@ -1999,7 +2027,7 @@ startBatteryDrain(db, io, saveDB);
       log(io, db, 'codestrike', `⚔️ Code Strike started — ${problems.length} problems, ${durationMin} min`);
     });
 
-    socket.on('codestrike:submit_code', ({ problem_id, code, language }) => {
+    socket.on('codestrike:submit_code', ({ problem_id, code, language, keystrokes, paste_blocked, typing_ms }) => {
       if (!rateLimit(socket.id, 'codestrike:submit', 2000)) return;
       if (!db.app_state.codestrike_active) {
         socket.emit('codestrike:submit_result', { ok: false, message: 'Code Strike is not accepting submissions right now.' });
@@ -2023,6 +2051,18 @@ startBatteryDrain(db, io, saveDB);
         language: String(language || '').slice(0, 20),
         submitted_at: new Date().toISOString(),
         resubmits: (prev?.resubmits || 0) + (prev ? 1 : 0),
+        // Typing telemetry — how this code came to exist in the box.
+        // Carried across resubmissions so a team can't launder a pasted
+        // solution by retyping one character and submitting again.
+        keystrokes: Math.max(
+          Number.isFinite(keystrokes) ? Math.max(0, Math.floor(keystrokes)) : 0,
+          prev?.keystrokes || 0,
+        ),
+        paste_blocked: (prev?.paste_blocked || 0) + (Number.isFinite(paste_blocked) ? Math.max(0, Math.floor(paste_blocked)) : 0),
+        typing_ms: Math.max(
+          Number.isFinite(typing_ms) ? Math.max(0, Math.floor(typing_ms)) : 0,
+          prev?.typing_ms || 0,
+        ),
       };
       saveDB();
       const submitted = Object.fromEntries(
@@ -2075,9 +2115,18 @@ startBatteryDrain(db, io, saveDB);
         problems: db.app_state.codestrike_problems || [],
         started_at: db.app_state.codestrike_started_at,
         duration_ms: db.app_state.codestrike_duration_ms,
+        strict_mode: db.app_state.event_config?.codestrike_strict_mode !== false,
         teams: db.teams.filter(t => !t.is_eliminated).map(t => ({
           team_id: t.id, team_name: t.name, color: t.color,
-          submissions: t.codestrike_submissions || {},
+          // Each submission carries a plain-language integrity read so a
+          // judge can see at a glance which code was actually written here.
+          submissions: Object.fromEntries(
+            Object.entries(t.codestrike_submissions || {}).map(([pid, sub]) => [pid, {
+              ...sub,
+              integrity: describeIntegrity(assessSubmission(sub)),
+              integrity_verdict: assessSubmission(sub).verdict,
+            }])
+          ),
           judge: t.codestrike_judge,
           score: t.codestrike_score,
         })),
@@ -2237,9 +2286,15 @@ startBatteryDrain(db, io, saveDB);
     socket.on('team:violation', ({ vtype }) => {
       if (!rateLimit(socket.id, 'team:violation', 2000)) return;
       if (!db.app_state.event_config?.protected_mode) return;
+      // Code Strike used to be exempt because teams needed an external
+      // editor. In strict mode the code is written in the platform, so
+      // there is no longer a legitimate reason to leave the tab — and
+      // leaving it is precisely how a solution gets fetched from an AI.
+      const strict = db.app_state.event_config?.codestrike_strict_mode !== false;
       const enforced = db.app_state.quiz_round_active
         || db.app_state.bughunt_active
-        || !!db.app_state.tiebreak?.active;
+        || !!db.app_state.tiebreak?.active
+        || (db.app_state.codestrike_active && strict);
       if (!enforced) return;
       const team_id = boundTeam(socket.id);
       const team = team_id && db.teams.find(t => t.id === team_id);

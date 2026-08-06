@@ -48,8 +48,14 @@ Load these exact numbers in one click: **Config → ⚔️ CODE ARENA 2026 templ
 - **One submission per team** (one laptop per team, per the rules). Teams type the corrected line for each buggy program.
 - **End & Grade** auto-grades with the lenient matcher (spacing/case/quotes don't matter). Then open the review panel: every team's typed fix is shown next to the accepted answers.
 - A correct fix written in an unexpected form? Type marks in the override box → **Set**. `↩ auto` restores the auto verdict. Totals update live everywhere.
+- **Someone submitted by accident?** Every joined device shows the form, so a nervous member can lock the team out early. Hit **🔓 Reopen** on that team in the review panel — their submission is discarded and they can work and submit again. Announce "only the team laptop submits" anyway.
 
 ### Mission 3 — Code Strike
+⚠️ **Strict mode is on by default — this is the anti-AI setting.** Solutions are **typed in the platform** (pasting is blocked), and Code Strike is no longer exempt from Protected Mode, so leaving the tab counts as a violation like every other round. Fetching an answer from an AI therefore costs a tab switch *and* has to be retyped by hand.
+- Judges see how much of each solution was actually typed. A flagged line — `🚩 not typed here — only 12 keystrokes for 1212 chars` — means the code did not come from that keyboard. **Ask that team to explain their solution before scoring it**; the signal tells you where to look, it does not prove anything on its own.
+- Teams cannot run their code in strict mode, so score the *approach*: a correct algorithm with a small syntax slip should not be marked as wrong.
+- Switch to **Open mode** in Config → Code Strike Settings if you would rather let teams use their own editor (the original behaviour, with no tab-switch detection during this round).
+- Tell teams at the briefing that this round is typed-only. It is the single most important thing to announce.
 - **Start** reveals all 4 problems (Easy 8 / Medium 12 / Medium 12 / Extreme 18) with the timer. Teams write code in their own editor and paste the final version per problem — resubmission allowed, latest paste counts and sets their submission time.
 - **End (lock submissions)** when time's up — judging continues after.
 - Judge panel: **View Code** per team per problem, enter **Correctness 0–10** and **Efficiency 0–10** → per-problem marks = 70% correctness + 20% efficiency + 10% time bonus (automatic). Judge notes under each problem tell evaluators what to look for. **Export CSV** for offline/parallel evaluation.

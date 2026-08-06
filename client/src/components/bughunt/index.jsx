@@ -25,8 +25,13 @@ export function BugHuntRound({ teamId, state }) {
       setSubmitLoading(false);
       if (!d.ok) setSubmitError(d.message || 'Submission failed — try again.');
     };
+    // Admin can reopen a submission (someone hit Submit early). Their
+    // typed fixes are still in local state, so they carry on where they
+    // left off rather than starting from a blank form.
+    const onReopened = () => { setSubmitError(''); setSubmitLoading(false); };
     socket.on('bughunt:submit_result', onResult);
-    return () => socket.off('bughunt:submit_result', onResult);
+    socket.on('bughunt:reopened', onReopened);
+    return () => { socket.off('bughunt:submit_result', onResult); socket.off('bughunt:reopened', onReopened); };
   }, []);
 
   const handleSubmitAll = () => {

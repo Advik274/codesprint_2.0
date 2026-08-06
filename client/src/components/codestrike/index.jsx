@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getSocket } from '../../hooks/useSocket';
 import { CountdownTimer } from '../shared/index.jsx';
 
@@ -15,6 +15,7 @@ export function CodeStrikeRound({ teamId, state }) {
   const team = state.teams.find(t => t.id === teamId);
   const problems = app_state.codestrike_problems || [];
   const submitted = team?.codestrike_submitted || {};
+  const strict = app_state.event_config?.codestrike_strict_mode !== false;
 
   // Not started yet
   if (!app_state.codestrike_active && problems.length === 0) {
@@ -77,23 +78,53 @@ export function CodeStrikeRound({ teamId, state }) {
         </div>
       </div>
 
+      {strict && (
+        <div style={{ padding: '10px 14px', marginBottom: 14, borderRadius: 8, border: '1px solid var(--danger)', background: 'color-mix(in srgb, var(--danger) 8%, transparent)', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--danger)', lineHeight: 1.6 }}>
+          ⌨️ <strong>Type your solutions here — pasting is disabled.</strong> Leaving this tab is recorded as a violation, exactly like the earlier rounds. Work out your logic on paper if it helps.
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {problems.map(p => (
-          <ProblemCard key={p.id} problem={p} submittedAt={submitted[p.id]} />
+          <ProblemCard key={p.id} problem={p} submittedAt={submitted[p.id]} strict={strict} />
         ))}
       </div>
     </div>
   );
 }
 
-// One problem: statement + samples + paste box + submit
-function ProblemCard({ problem: p, submittedAt }) {
+// One problem: statement + samples + code box + submit
+function ProblemCard({ problem: p, submittedAt, strict }) {
   const [code, setCode] = useState('');
   const [language, setLanguage] = useState('python');
   const [expanded, setExpanded] = useState(true);
   const [status, setStatus] = useState(null); // { ok, message }
   const [loading, setLoading] = useState(false);
+  const [pasteWarning, setPasteWarning] = useState(false);
   const diffColor = DIFF_COLORS[p.difficulty] || 'var(--info)';
+
+  // ── Typing telemetry ──────────────────────────────────────────
+  // In strict mode the solution has to be written here, so we count
+  // what the keyboard actually produced. Judges compare that against
+  // the length of the submitted code: a 1200-character answer that
+  // arrived with 40 keystrokes did not get typed, whatever the
+  // explanation turns out to be.
+  const stats = useRef({ keystrokes: 0, pasteBlocked: 0, firstKeyAt: null, lastKeyAt: null });
+  const onKeyDown = (e) => {
+    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+    const s = stats.current;
+    s.keystrokes += 1;
+    const now = Date.now();
+    if (!s.firstKeyAt) s.firstKeyAt = now;
+    s.lastKeyAt = now;
+  };
+  const blockPaste = (e) => {
+    if (!strict) return;
+    e.preventDefault();
+    stats.current.pasteBlocked += 1;
+    setPasteWarning(true);
+    setTimeout(() => setPasteWarning(false), 4000);
+  };
 
   useEffect(() => {
     const socket = getSocket();
@@ -114,7 +145,13 @@ function ProblemCard({ problem: p, submittedAt }) {
     if (!code.trim()) return;
     setStatus(null);
     setLoading(true);
-    getSocket().emit('codestrike:submit_code', { problem_id: p.id, code, language });
+    const s = stats.current;
+    getSocket().emit('codestrike:submit_code', {
+      problem_id: p.id, code, language,
+      keystrokes: s.keystrokes,
+      paste_blocked: s.pasteBlocked,
+      typing_ms: s.firstKeyAt && s.lastKeyAt ? s.lastKeyAt - s.firstKeyAt : 0,
+    });
     setTimeout(() => setLoading(false), 4000);
   };
 
@@ -170,8 +207,8 @@ function ProblemCard({ problem: p, submittedAt }) {
           {/* Submission area */}
           <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
-                PASTE YOUR FINAL CODE
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: strict ? 'var(--danger)' : 'var(--text3)' }}>
+                {strict ? '⌨️ TYPE YOUR SOLUTION HERE — PASTING IS DISABLED' : 'PASTE YOUR FINAL CODE'}
               </div>
               <select value={language} onChange={e => setLanguage(e.target.value)}
                 style={{ fontFamily: 'var(--font-mono)', fontSize: 12, background: 'var(--bg3)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px' }}>
@@ -181,10 +218,21 @@ function ProblemCard({ problem: p, submittedAt }) {
             <textarea
               value={code}
               onChange={e => setCode(e.target.value.slice(0, 20000))}
-              placeholder={`Write/paste your ${p.title} solution here...`}
-              rows={8}
-              style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12.5, background: 'var(--bg3)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: 10, resize: 'vertical' }}
+              onKeyDown={onKeyDown}
+              onPaste={blockPaste}
+              onDrop={blockPaste}
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              placeholder={strict ? `Type your ${p.title} solution here...` : `Write/paste your ${p.title} solution here...`}
+              rows={10}
+              style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12.5, background: 'var(--bg3)', color: 'var(--text)', border: `1px solid ${pasteWarning ? 'var(--danger)' : 'var(--border)'}`, borderRadius: 6, padding: 10, resize: 'vertical' }}
             />
+            {pasteWarning && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--danger)', marginTop: 6 }}>
+                🚫 Pasting is disabled in this round — type your solution. The attempt was recorded.
+              </div>
+            )}
             {status && (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: status.ok ? 'var(--accent)' : 'var(--danger)', marginTop: 6 }}>
                 {status.ok ? '✅' : '❌'} {status.message}

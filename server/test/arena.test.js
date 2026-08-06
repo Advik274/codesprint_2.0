@@ -4,6 +4,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { gradeBugHunt, calcCodeStrikeProblemScore, calcCodeStrikeTotal, getResultsBoard, computeReveal, calcViolationPenalty } from '../lib/scoring.js';
 import { pickQuizQuestions, ARENA_MCQ_POOL, GAUNTLET_QUESTIONS, BUG_HUNT_PROGRAMS, CODE_STRIKE_PROBLEMS } from '../lib/questions.js';
+import { assessSubmission, describeIntegrity } from '../lib/integrity.js';
 
 const PROGRAMS = [
   { id: 'p1', answers: ['for i in range(1, n+1):'] },
@@ -316,5 +317,37 @@ describe('getResultsBoard — penalties applied', () => {
       makeTeam({ id: 'clean', bughunt_score: 30 }),
     ];
     assert.equal(getResultsBoard(withWin, ['bug_hunt'])[0].team_id, 'dirty_winner');
+  });
+});
+
+describe('assessSubmission — Code Strike typing integrity', () => {
+  test('code with keystrokes in line with its length reads as typed', () => {
+    const a = assessSubmission({ code: 'x'.repeat(400), keystrokes: 460 });
+    assert.equal(a.verdict, 'typed');
+  });
+
+  test('a long solution with almost no keystrokes is flagged', () => {
+    const a = assessSubmission({ code: 'x'.repeat(1200), keystrokes: 40 });
+    assert.equal(a.verdict, 'appeared');
+    assert.match(describeIntegrity(a), /not typed here/);
+  });
+
+  test('partial typing lands in between', () => {
+    const a = assessSubmission({ code: 'x'.repeat(400), keystrokes: 160 });
+    assert.equal(a.verdict, 'partial');
+  });
+
+  test('very short answers are not judged either way', () => {
+    assert.equal(assessSubmission({ code: 'print(1)', keystrokes: 0 }).verdict, 'trivial');
+  });
+
+  test('a client that sent no telemetry is unverified, not accused', () => {
+    assert.equal(assessSubmission({ code: 'x'.repeat(400) }).verdict, 'unverified');
+  });
+
+  test('blocked paste attempts are surfaced to the judge', () => {
+    const a = assessSubmission({ code: 'x'.repeat(400), keystrokes: 450, paste_blocked: 3 });
+    assert.equal(a.paste_blocked, 3);
+    assert.match(describeIntegrity(a), /3 pastes blocked/);
   });
 });

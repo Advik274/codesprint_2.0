@@ -90,16 +90,28 @@ export default function TeamDashboard() {
   // server the moment it happens. Code Strike is deliberately exempt —
   // teams have to switch to their own editor during it.
   const tbLive = state.app_state?.tiebreak?.active && state.app_state.tiebreak.team_ids?.includes(teamId);
+  // Code Strike is only exempt when strict mode is off (teams then need
+  // an external editor). With strict mode on the code is written in the
+  // platform, so leaving the tab has no legitimate purpose and counts.
+  const csStrict = state.app_state?.event_config?.codestrike_strict_mode !== false;
   const lockdown = !!state.app_state?.event_config?.protected_mode
     && !team?.is_eliminated
-    && (state.app_state.quiz_round_active || state.app_state.bughunt_active || tbLive);
+    && (state.app_state.quiz_round_active
+      || state.app_state.bughunt_active
+      || tbLive
+      || (state.app_state.codestrike_active && csStrict));
   const [violationFlash, setViolationFlash] = useState(null);
   useEffect(() => {
     if (!lockdown) return;
     const socket = getSocket();
     const report = (vtype) => socket.emit('team:violation', { vtype });
     const onVis = () => { if (document.hidden) report('tab_switch'); };
-    const onCopyPaste = (e) => { e.preventDefault(); report('copy_paste'); };
+    // Code Strike blocks paste inside its own editor and records the
+    // attempt there, so don't double-count it as a global violation.
+    const onCopyPaste = (e) => {
+      if (state.app_state.codestrike_active && e.target?.tagName === 'TEXTAREA') return;
+      e.preventDefault(); report('copy_paste');
+    };
     const onCtx = (e) => e.preventDefault();
     const onRecorded = (d) => { setViolationFlash(d); setTimeout(() => setViolationFlash(null), 7000); };
     document.addEventListener('visibilitychange', onVis);

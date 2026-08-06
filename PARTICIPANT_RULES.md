@@ -160,7 +160,8 @@ You can resubmit as many times as you want. **Last submission before timer ends 
 
 ### MISSION 3 — CODE STRIKE · 4 problems · 40 min · 50 marks
 - Easy (8) / Medium (12) / Medium (12) / Extreme (18) revealed at once — solve in any language, any editor
-- **Paste your final code per problem** into the platform. Re-submitting is allowed until time runs out, but the latest paste resets your submission time
+- ⌨️ **Type your solution into the platform — pasting is disabled**, and leaving the tab is recorded as a violation just like the earlier rounds. Plan on paper, type it in.
+- Re-submitting is allowed until time runs out, but the latest version resets your submission time
 - Scoring per problem: **70% correctness + 20% efficiency (judged) + 10% time bonus** (earlier = more)
 - Test against the sample inputs before pasting — judges run the samples first
 

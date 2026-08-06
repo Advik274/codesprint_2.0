@@ -2109,6 +2109,7 @@ function ConfigTab({ state, emit }) {
     penalty_free_violations: String(cfg.penalty_free_violations ?? 2),
     penalty_marks_each: String(cfg.penalty_marks_each ?? 2),
     penalty_max: String(cfg.penalty_max ?? 10),
+    codestrike_strict_mode: cfg.codestrike_strict_mode !== false,
     // CODE ARENA missions
     quiz_question_source: cfg.quiz_question_source || 'dsa',
     quiz_marks: String(cfg.quiz_marks ?? 20),
@@ -2150,6 +2151,7 @@ function ConfigTab({ state, emit }) {
       penalty_free_violations: parseInt(form.penalty_free_violations) || 0,
       penalty_marks_each: parseFloat(form.penalty_marks_each) || 0,
       penalty_max: parseFloat(form.penalty_max) || 0,
+      codestrike_strict_mode: !!form.codestrike_strict_mode,
     }});
   };
 
@@ -2231,6 +2233,19 @@ function ConfigTab({ state, emit }) {
           </div>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:6 }}>
             4 problems (Easy 8 / Medium 12 / Medium 12 / Extreme 18) scaled to Total Marks. Score = 70% correctness + 20% efficiency + 10% submission-time bonus.
+          </div>
+          <div style={{ marginTop:12 }}>
+            <button onClick={()=>setForm(f=>({...f, codestrike_strict_mode: !f.codestrike_strict_mode}))} style={{
+              padding:'9px 16px', borderRadius:6, fontSize:13,
+              background: form.codestrike_strict_mode ? 'color-mix(in srgb, var(--danger) 12%, transparent)' : 'var(--bg3)',
+              border: `1px solid ${form.codestrike_strict_mode ? 'var(--danger)' : 'var(--border)'}`,
+              color: form.codestrike_strict_mode ? 'var(--danger)' : 'var(--text3)',
+              textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)',
+            }}>{form.codestrike_strict_mode ? '✓ Strict mode (anti-AI)' : '○ Open mode (external editor)'}</button>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:6, lineHeight:1.6 }}>
+              <strong>Strict</strong>: solutions are typed in the platform, pasting is blocked, and Code Strike stops being exempt from Protected Mode — so fetching an answer from an AI means leaving the tab, which is recorded and penalised. Judges also see how much of each solution was actually typed.<br/>
+              <strong>Open</strong>: teams use their own editor and paste (the original behaviour) — no tab-switch detection during this round.
+            </div>
           </div>
         </div>
         )}
@@ -2830,7 +2845,16 @@ function BugHuntTab({ state, emit, phase }) {
               <div key={t.team_id} style={{ border:`1px solid ${t.color}44`, borderRadius:8, padding:'12px 14px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
                   <div style={{ fontFamily:'var(--font-display)', fontSize:15, color:t.color }}>{t.team_name}</div>
-                  <div style={{ fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{t.score !== null && t.score !== undefined ? `${t.score} marks` : 'not graded yet'}</div>
+                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    <div style={{ fontFamily:'var(--font-mono)', fontSize:13, color:'var(--accent)' }}>{t.score !== null && t.score !== undefined ? `${t.score} marks` : 'not graded yet'}</div>
+                    <button className="btn-ghost" style={{ fontSize:10, padding:'3px 8px', color:'var(--warning)', borderColor:'var(--warning)' }}
+                      title="Discard this team's submission so they can edit and submit again — use if someone submitted by accident."
+                      onClick={()=>{ if(confirm(`Reopen ${t.team_name}'s Bug Hunt submission?
+
+Their current answers are discarded and they can submit again. Use this if a member submitted early by mistake.`)) emit('admin:reopen_bughunt',{team_id:t.team_id}); }}>
+                      🔓 Reopen
+                    </button>
+                  </div>
                 </div>
                 {review.programs.map(p=>{
                   const theirAnswer = t.submission?.answers?.[p.id];
@@ -3003,8 +3027,11 @@ function CodeStrikeTab({ state, emit, phase }) {
           <h3 style={{ fontFamily:'var(--font-display)', fontSize:16 }}>JUDGE SUBMISSIONS</h3>
           <button className="btn-ghost" onClick={loadSubs} style={{ fontSize:11, padding:'4px 10px' }}>🔄 Refresh</button>
         </div>
-        <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginBottom:14 }}>
+        <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--text3)', marginBottom:14, lineHeight:1.6 }}>
           Correctness and Efficiency are 0–10 each. Final marks per problem = 70% correctness + 20% efficiency + 10% time bonus (computed automatically from submission time). Judge notes are only visible here.
+          {data?.strict_mode !== false && (
+            <><br/><span style={{ color:'var(--danger)' }}>🚩 Flagged submissions</span> had far fewer keystrokes than characters — the code did not get typed in the box. Ask that team to explain their solution before scoring it.</>
+          )}
         </div>
         {!data || (data.problems||[]).length===0 ? (
           <div style={{ textAlign:'center', padding:24, color:'var(--text3)', fontFamily:'var(--font-mono)', fontSize:13 }}>
@@ -3040,6 +3067,16 @@ function CodeStrikeTab({ state, emit, phase }) {
                           </div>
                           {p.judge_notes && (
                             <div style={{ fontFamily:'var(--font-mono)', fontSize:11, color:'var(--info)', marginTop:2 }}>📝 {p.judge_notes}</div>
+                          )}
+                          {sub.integrity && (
+                            <div style={{
+                              fontFamily:'var(--font-mono)', fontSize:11, marginTop:3,
+                              color: sub.integrity_verdict==='appeared' ? 'var(--danger)'
+                                   : sub.integrity_verdict==='partial' ? 'var(--warning)'
+                                   : 'var(--text3)',
+                            }}>
+                              {sub.integrity_verdict==='typed' ? '⌨️' : ''} {sub.integrity}
+                            </div>
                           )}
                         </div>
                         <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>

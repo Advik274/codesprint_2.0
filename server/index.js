@@ -142,6 +142,9 @@ export const EMPTY_DB = () => ({
       penalty_free_violations: 2,
       penalty_marks_each: 2,
       penalty_max: 10,
+      // Code Strike anti-AI: code is written in the platform with paste
+      // blocked, and the round stops being exempt from Protected Mode.
+      codestrike_strict_mode: true,
       // V7: Custom Questions
       custom_questions: [],
     },
@@ -213,6 +216,7 @@ function patchDB() {
   if (s.event_config.penalty_free_violations === undefined) s.event_config.penalty_free_violations = 2;
   if (s.event_config.penalty_marks_each === undefined) s.event_config.penalty_marks_each = 2;
   if (s.event_config.penalty_max === undefined) s.event_config.penalty_max = 10;
+  if (s.event_config.codestrike_strict_mode === undefined) s.event_config.codestrike_strict_mode = true;
   // CODE ARENA: app_state defaults
   if (s.bughunt_active === undefined) s.bughunt_active = false;
   if (s.bughunt_timer_end === undefined) s.bughunt_timer_end = null;
