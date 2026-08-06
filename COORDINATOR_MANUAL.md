@@ -20,7 +20,7 @@
 
 ## ⚔️ RUNNING CODE ARENA 2026 (Reboot Club format)
 
-Three missions on the same platform, 100 marks total. Enable via **Config tab → ⚔️ CODE ARENA 2026 template → Save** (sets: quiz 20 Q / 25 min / arena bank / 20 marks · Bug Hunt 5 programs / 30 min / 30 marks · Code Strike 45 min / 50 marks).
+Three missions on the same platform, 100 marks total. Enable via **Config tab → ⚔️ CODE ARENA 2026 template → Save** (sets: quiz 25 Q / 15 min / arena bank / 20 marks · Bug Hunt 5 programs / 20 min / 30 marks · Code Strike 4 problems / 40 min / 50 marks).
 
 ### Run sheet (live timings)
 | Clock | Activity | Where |
@@ -50,7 +50,7 @@ Load these exact numbers in one click: **Config → ⚔️ CODE ARENA 2026 templ
 - A correct fix written in an unexpected form? Type marks in the override box → **Set**. `↩ auto` restores the auto verdict. Totals update live everywhere.
 
 ### Mission 3 — Code Strike
-- **Start** reveals all 3 problems (Easy 10 / Medium 15 / Hard 25) with the timer. Teams write code in their own editor and paste the final version per problem — resubmission allowed, latest paste counts and sets their submission time.
+- **Start** reveals all 4 problems (Easy 8 / Medium 12 / Medium 12 / Extreme 18) with the timer. Teams write code in their own editor and paste the final version per problem — resubmission allowed, latest paste counts and sets their submission time.
 - **End (lock submissions)** when time's up — judging continues after.
 - Judge panel: **View Code** per team per problem, enter **Correctness 0–10** and **Efficiency 0–10** → per-problem marks = 70% correctness + 20% efficiency + 10% time bonus (automatic). Judge notes under each problem tell evaluators what to look for. **Export CSV** for offline/parallel evaluation.
 
