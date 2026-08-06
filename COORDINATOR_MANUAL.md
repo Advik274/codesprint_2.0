@@ -74,7 +74,23 @@ Guardrails: duplicate team names are rejected (case-insensitive), members are ca
 ### 🔒 Protected Mode (the "AI tools not allowed" rule, enforced)
 - Toggle it in the **Setup tab**. While ON, during **quiz, Bug Hunt and tie-breaks** every team browser blocks copy/paste + right-click, shows a red lockdown banner, and **reports every tab/app switch to you instantly** — toast + event log + a 🚨 counter on the team's row in the Teams tab (click it to see details or clear it).
 - **Code Strike is exempt on purpose** — teams must switch to their editor during it.
-- Honest limits: a browser cannot see a second phone or stop someone typing a question into ChatGPT on another device. Protected Mode catches everything on the event device and gives you evidence; volunteers walking the room cover the rest. Penalties are your call — use the existing Eliminate / mark-override tools.
+- Honest limits: a browser cannot see a second phone or stop someone typing a question into ChatGPT on another device. Protected Mode catches everything on the event device and gives you evidence; volunteers walking the room cover the rest.
+
+### 🟨 Penalty ladder (automatic)
+Violations escalate on their own, so the rule is the same for everyone and nobody can argue you singled them out:
+
+| Violation | What happens |
+|---|---|
+| 1st | ⚠️ **Warning** — full-screen notice on that team's device. No marks lost. |
+| 2nd | 🟨 **Yellow card** — they're told the next one costs marks. Still no deduction. |
+| 3rd and beyond | 🟥 **−2 marks each**, capped at −10 total. |
+
+- The first two are free **on purpose**: a "tab switch" also fires on an incoming call, a notification, or the screen locking. Nobody loses marks for a phone ringing.
+- **Cards are private** — admin panel and that team's own screen only. Nothing appears on the projector, so a team isn't publicly shamed for something that may have been an accident.
+- **Fewer violations breaks a tie** (after tie-break wins), which is exactly the fair-ranking use you wanted.
+- Every number is adjustable in **Config → Discipline**, or switch it to warnings-only with one button.
+- **A team's row in the Teams tab shows their card and the deduction** — hover for the breakdown (tab switches vs copy/paste, last time). If you confirm a false positive, click it to clear: the violations *and* the penalty come off immediately.
+- Announce the ladder in the briefing. A penalty nobody knew about is the one that gets argued about at prize-giving.
 
 ### Pauses & fixes
 - Every mission has its own Pause / Resume / ±minutes in its tab; **Emergency Pause** (Control tab) freezes whichever mission timer is live.

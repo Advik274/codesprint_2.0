@@ -819,14 +819,19 @@ export default function AdminDashboard() {
                       <input type="number" min="0" max="100" value={battOverride[team.id]??''} onChange={e=>setBattOverride(b=>({...b,[team.id]:e.target.value}))} placeholder="bat%" style={{ width:60, padding:'4px 6px', fontSize:12 }}/>
                       <button className="btn-ghost" onClick={()=>emit('admin:override_battery',{team_id:team.id,battery:battOverride[team.id]})} style={{ padding:'4px 8px', fontSize:11 }}>Set</button>
                     </>}
-                    {(team.violations?.total||0) > 0 && (
-                      <button
-                        title={`Tab switches: ${team.violations.tab_switch||0} · Copy/paste: ${team.violations.copy_paste||0} · Last: ${team.violations.last_at?new Date(team.violations.last_at).toLocaleTimeString():'—'}\nClick to clear.`}
-                        onClick={()=>{ if(confirm(`Clear ${team.name}'s ${team.violations.total} violation(s)?`)) emit('admin:clear_violations',{team_id:team.id}); }}
-                        style={{ padding:'4px 10px', fontSize:11, background:'color-mix(in srgb, var(--danger) 12%, transparent)', border:'1px solid var(--danger)', borderRadius:4, color:'var(--danger)', cursor:'pointer', fontFamily:'var(--font-mono)' }}>
-                        🚨 {team.violations.total}
-                      </button>
-                    )}
+                    {(team.violations?.total||0) > 0 && (()=>{
+                      const stage = team.violations.stage || (team.violations.total===1?'warning':team.violations.total<=2?'yellow':'red');
+                      const card = { warning:{icon:'⚠️',c:'var(--warning)'}, yellow:{icon:'🟨',c:'var(--warning)'}, red:{icon:'🟥',c:'var(--danger)'} }[stage];
+                      const pen = team.violations.penalty || 0;
+                      return (
+                        <button
+                          title={`Tab switches: ${team.violations.tab_switch||0} · Copy/paste: ${team.violations.copy_paste||0}\nLast: ${team.violations.last_at?new Date(team.violations.last_at).toLocaleTimeString():'—'}\n${pen?`Penalty applied: −${pen} marks`:'No marks deducted yet'}\n\nClick to clear (use for a confirmed false positive).`}
+                          onClick={()=>{ if(confirm(`Clear ${team.name}'s ${team.violations.total} violation(s)?${pen?`\n\nThis also removes the −${pen} mark penalty.`:''}`)) emit('admin:clear_violations',{team_id:team.id}); }}
+                          style={{ padding:'4px 10px', fontSize:11, background:`color-mix(in srgb, ${card.c} 12%, transparent)`, border:`1px solid ${card.c}`, borderRadius:4, color:card.c, cursor:'pointer', fontFamily:'var(--font-mono)' }}>
+                          {card.icon} {team.violations.total}{pen?` · −${pen}`:''}
+                        </button>
+                      );
+                    })()}
                     {team.is_eliminated
                       ?<button className="btn-ghost" onClick={()=>emit('admin:restore_team',{team_id:team.id})} style={{ fontSize:11, padding:'4px 10px', color:'var(--accent)' }}>Restore</button>
                       :<button className="btn-danger" onClick={()=>{ if(confirm(`Eliminate ${team.name}?`)) emit('admin:eliminate_team',{team_id:team.id}); }} style={{ padding:'4px 10px', fontSize:11 }}>Eliminate</button>
@@ -1366,13 +1371,25 @@ export default function AdminDashboard() {
                 let scoreUnit;
                 if (phasesEnabled.includes('bug_hunt') || phasesEnabled.includes('code_strike')) {
                   // CODE ARENA: combined mission marks (mirrors server getResultsBoard)
-                  const totalOf = t =>
+                  const cfg = state.app_state?.event_config || {};
+                  const penOf = t => {
+                    const total = t.violations?.total || 0;
+                    const free = Math.max(0, parseInt(cfg.penalty_free_violations ?? 2));
+                    const each = Math.max(0, parseFloat(cfg.penalty_marks_each ?? 2));
+                    const max = Math.max(0, parseFloat(cfg.penalty_max ?? 10));
+                    if (cfg.penalty_enabled === false) return 0;
+                    return Math.round(Math.min(Math.max(0, total-free)*each, max)*10)/10;
+                  };
+                  const totalOf = t => Math.max(0,
                     (phasesEnabled.includes('quiz_round') ? (t.quiz_marks_scored||0) : 0)
                     + (phasesEnabled.includes('bug_hunt') ? (t.bughunt_score||0) : 0)
-                    + (phasesEnabled.includes('code_strike') ? (t.codestrike_score||0) : 0);
+                    + (phasesEnabled.includes('code_strike') ? (t.codestrike_score||0) : 0)
+                    - penOf(t));
                   board = [...state.teams].filter(t=>!t.is_eliminated)
-                    .sort((a,b)=> totalOf(b)-totalOf(a) || (b.tiebreak_wins||0)-(a.tiebreak_wins||0));
-                  scoreOf = t => `${Math.round(totalOf(t)*10)/10} marks${(t.tiebreak_wins||0)>0?' ⚡':''}`;
+                    .sort((a,b)=> totalOf(b)-totalOf(a)
+                      || (b.tiebreak_wins||0)-(a.tiebreak_wins||0)
+                      || (a.violations?.total||0)-(b.violations?.total||0));
+                  scoreOf = t => `${Math.round(totalOf(t)*10)/10} marks${penOf(t)?` (−${penOf(t)})`:''}${(t.tiebreak_wins||0)>0?' ⚡':''}`;
                   scoreUnit = 'Total';
                 } else if (phasesEnabled.includes('phase3')) {
                   board = [...state.teams].filter(t=>t.phase3_judge_scores).sort((a,b)=>b.phase3_judge_scores.total-a.phase3_judge_scores.total);
@@ -2087,6 +2104,11 @@ function ConfigTab({ state, emit }) {
     speed_demo_duration_sec: String(cfg.speed_demo_duration_sec ?? 90),
     audience_weight_percent: String(cfg.audience_weight_percent ?? 10),
     reveal_top_n: String(cfg.reveal_top_n ?? 0),
+    // Discipline
+    penalty_enabled: cfg.penalty_enabled !== false,
+    penalty_free_violations: String(cfg.penalty_free_violations ?? 2),
+    penalty_marks_each: String(cfg.penalty_marks_each ?? 2),
+    penalty_max: String(cfg.penalty_max ?? 10),
     // CODE ARENA missions
     quiz_question_source: cfg.quiz_question_source || 'dsa',
     quiz_marks: String(cfg.quiz_marks ?? 20),
@@ -2125,6 +2147,9 @@ function ConfigTab({ state, emit }) {
       bughunt_num_programs: parseInt(form.bughunt_num_programs) || 5,
       codestrike_duration_min: parseInt(form.codestrike_duration_min) || 45,
       codestrike_marks: parseInt(form.codestrike_marks) || 50,
+      penalty_free_violations: parseInt(form.penalty_free_violations) || 0,
+      penalty_marks_each: parseFloat(form.penalty_marks_each) || 0,
+      penalty_max: parseFloat(form.penalty_max) || 0,
     }});
   };
 
@@ -2238,6 +2263,30 @@ function ConfigTab({ state, emit }) {
               <ConfigField form={form} setForm={setForm} label="Audience Vote Weight" field="audience_weight_percent" min={0} max={30} unit="% of score" />
             </div>
           )}
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:8 }}>Discipline (Protected Mode violations)</div>
+          <div style={{ marginBottom:10 }}>
+            <button onClick={()=>setForm(f=>({...f, penalty_enabled: !f.penalty_enabled}))} style={{
+              padding:'8px 16px', borderRadius:6, fontSize:13,
+              background: form.penalty_enabled ? 'color-mix(in srgb, var(--danger) 12%, transparent)' : 'var(--bg3)',
+              border: `1px solid ${form.penalty_enabled ? 'var(--danger)' : 'var(--border)'}`,
+              color: form.penalty_enabled ? 'var(--danger)' : 'var(--text3)',
+              textTransform:'none', letterSpacing:'normal', fontFamily:'var(--font-body)',
+            }}>{form.penalty_enabled ? '✓ Penalties on' : '○ Warnings only'}</button>
+          </div>
+          {form.penalty_enabled && (
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
+              <ConfigField form={form} setForm={setForm} label="Free Violations" field="penalty_free_violations" min={0} max={10} />
+              <ConfigField form={form} setForm={setForm} label="Marks Per Violation After That" field="penalty_marks_each" min={0} max={25} step={0.5} />
+              <ConfigField form={form} setForm={setForm} label="Max Total Penalty" field="penalty_max" min={0} max={100} />
+            </div>
+          )}
+          <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:6, lineHeight:1.6 }}>
+            1st violation = ⚠️ warning · 2nd = 🟨 yellow card · after the free allowance each one costs marks (capped).
+            Cards are shown to the admin and that team only — never on the projector. Fewer violations also breaks a tie.
+          </div>
         </div>
 
         <div style={{ marginBottom:16 }}>

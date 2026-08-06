@@ -10,6 +10,33 @@ export function calcPhase3Score(ui, functionality, problemFit) {
   return Math.round((ui * 0.3 + functionality * 0.4 + problemFit * 0.3) * 10);
 }
 
+// ── Discipline: escalating violation penalties ───────────────────
+// Protected Mode records a violation every time a team leaves the event
+// tab or tries to copy/paste during a timed round. A bare counter
+// deters nobody, so violations escalate — but the first two are always
+// free, because a "tab switch" also fires on an incoming call, a
+// notification, or the screen locking. Marks are only ever deducted
+// once a team is clearly past accident territory, and the deduction is
+// capped so one misbehaving phone can't wipe out a real performance.
+//
+//   1st        ⚠️  warning     — no score impact
+//   2nd        🟨 yellow card  — no score impact, flagged for the admin
+//   3rd+       🟥 penalty      — marks off, capped
+export const PENALTY_DEFAULTS = { free: 2, each: 2, max: 10 };
+
+export function calcViolationPenalty(violations, config = {}) {
+  const total = violations?.total || 0;
+  const free = Math.max(0, parseInt(config.penalty_free_violations ?? PENALTY_DEFAULTS.free));
+  const each = Math.max(0, parseFloat(config.penalty_marks_each ?? PENALTY_DEFAULTS.each));
+  const max = Math.max(0, parseFloat(config.penalty_max ?? PENALTY_DEFAULTS.max));
+  const enabled = config.penalty_enabled !== false;
+
+  const stage = total === 0 ? 'clean' : total === 1 ? 'warning' : total <= free ? 'yellow' : 'red';
+  const chargeable = Math.max(0, total - free);
+  const penalty = enabled ? Math.min(chargeable * each, max) : 0;
+  return { stage, total, chargeable, penalty: Math.round(penalty * 10) / 10 };
+}
+
 // ── CODE ARENA: Mission 2 — Bug Hunt grading ─────────────────────
 // Pure so it's unit-testable. Marks are split evenly across the
 // programs in play. Auto verdict comes from the same lenient matcher
@@ -83,7 +110,7 @@ export function getFinalBoard(teams) {
 // Smart results board: uses the correct score metric depending on which phases were enabled.
 // This fixes the bug where quiz-only events showed #0 ??? because getFinalBoard
 // filters by phase3_judge_scores which don't exist when quiz is the last phase.
-export function getResultsBoard(teams, phasesEnabled = []) {
+export function getResultsBoard(teams, phasesEnabled = [], config = {}) {
   const enabled = Array.isArray(phasesEnabled) ? phasesEnabled : [];
 
   // CODE ARENA: combined mission leaderboard — active whenever Bug Hunt
@@ -98,10 +125,24 @@ export function getResultsBoard(teams, phasesEnabled = []) {
         const quiz = enabled.includes('quiz_round') ? (t.quiz_marks_scored || 0) : 0;
         const bughunt = enabled.includes('bug_hunt') ? (t.bughunt_score || 0) : 0;
         const codestrike = enabled.includes('code_strike') ? (t.codestrike_score || 0) : 0;
-        const total = Math.round((quiz + bughunt + codestrike) * 10) / 10;
-        return { t, total, breakdown: { quiz, bughunt, codestrike, tiebreak_wins: t.tiebreak_wins || 0 } };
+        const pen = calcViolationPenalty(t.violations, config);
+        // Never let a penalty push a team below zero — a negative total
+        // reads as a scoring bug on the big screen, not as a punishment.
+        const total = Math.max(0, Math.round((quiz + bughunt + codestrike - pen.penalty) * 10) / 10);
+        return {
+          t, total,
+          breakdown: {
+            quiz, bughunt, codestrike,
+            penalty: pen.penalty, violations: pen.total, card: pen.stage,
+            tiebreak_wins: t.tiebreak_wins || 0,
+          },
+        };
       })
-      .sort((a, b) => b.total - a.total || b.breakdown.tiebreak_wins - a.breakdown.tiebreak_wins)
+      // Ties: tie-break wins first, then the cleaner disciplinary record
+      .sort((a, b) =>
+        b.total - a.total
+        || b.breakdown.tiebreak_wins - a.breakdown.tiebreak_wins
+        || a.breakdown.violations - b.breakdown.violations)
       .map(({ t, total, breakdown }, i) => ({
         rank: i + 1,
         team_id: t.id, team_name: t.name, color: t.color,
@@ -170,8 +211,8 @@ export function getResultsBoard(teams, phasesEnabled = []) {
 // topN > 0 limits the dramatic reveal to just the top N places instead of
 // the whole field; revealIndex is the last index that was revealed
 // (-1 if nothing revealed yet).
-export function computeReveal(teams, phasesEnabled, revealIndex, topN = 0) {
-  const board = getResultsBoard(teams, phasesEnabled);
+export function computeReveal(teams, phasesEnabled, revealIndex, topN = 0, config = {}) {
+  const board = getResultsBoard(teams, phasesEnabled, config);
   const limitedBoard = topN > 0 ? board.slice(0, topN) : board;
   const revealBoard = [...limitedBoard].reverse(); // worst → best
 

@@ -101,7 +101,7 @@ export default function TeamDashboard() {
     const onVis = () => { if (document.hidden) report('tab_switch'); };
     const onCopyPaste = (e) => { e.preventDefault(); report('copy_paste'); };
     const onCtx = (e) => e.preventDefault();
-    const onRecorded = (d) => { setViolationFlash(d); setTimeout(() => setViolationFlash(null), 5000); };
+    const onRecorded = (d) => { setViolationFlash(d); setTimeout(() => setViolationFlash(null), 7000); };
     document.addEventListener('visibilitychange', onVis);
     document.addEventListener('copy', onCopyPaste);
     document.addEventListener('cut', onCopyPaste);
@@ -131,11 +131,34 @@ export default function TeamDashboard() {
           🔒 PROTECTED MODE — leaving this tab or using copy/paste is recorded and reported to the admin
         </div>
       )}
-      {violationFlash && (
-        <div style={{ position: 'fixed', top: 72, left: '50%', transform: 'translateX(-50%)', zIndex: 600, maxWidth: '92vw', background: 'var(--bg2)', border: '2px solid var(--danger)', borderRadius: 8, padding: '12px 20px', fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--danger)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-          🚨 Violation #{violationFlash.total} recorded — {violationFlash.type === 'tab_switch' ? 'you left the event tab' : 'copy/paste is disabled in this round'}. The admin has been notified.
-        </div>
-      )}
+      {violationFlash && (() => {
+        // Escalation is spelled out so a team always knows exactly where
+        // it stands and what the next one costs — a penalty nobody saw
+        // coming is the one that gets argued about at prize-giving.
+        const stage = violationFlash.stage || 'warning';
+        const cfg = { warning: { icon: '⚠️', label: 'WARNING', color: 'var(--warning)' },
+                      yellow:  { icon: '🟨', label: 'YELLOW CARD', color: 'var(--warning)' },
+                      red:     { icon: '🟥', label: 'PENALTY', color: 'var(--danger)' } }[stage];
+        const nextCost = violationFlash.each ?? 2;
+        return (
+          <div style={{ position: 'fixed', top: 72, left: '50%', transform: 'translateX(-50%)', zIndex: 600, maxWidth: '92vw', width: 380, background: 'var(--bg2)', border: `2px solid ${cfg.color}`, borderRadius: 10, padding: '16px 20px', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: cfg.color, marginBottom: 6 }}>
+              {cfg.icon} {cfg.label} · #{violationFlash.total}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.55 }}>
+              {violationFlash.type === 'tab_switch' ? 'You left the event tab.' : 'Copy/paste is disabled in this round.'}
+              {' '}The admin has been notified.
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: cfg.color, marginTop: 8 }}>
+              {stage === 'red'
+                ? `−${violationFlash.penalty} marks applied. Each further violation costs another ${nextCost}.`
+                : stage === 'yellow'
+                  ? `No marks lost yet — the next violation costs ${nextCost} marks.`
+                  : 'No marks lost. A second violation is a yellow card.'}
+            </div>
+          </div>
+        );
+      })()}
       {showEliminated && <EliminationOverlay team={team} onDismiss={() => { setShowEliminated(false); navigate('/spectator'); }} />}
       {!team.is_eliminated && <TieBreakOverlay teamId={teamId} state={state} />}
       {!team.is_eliminated && !['setup','results'].includes(phase) && (

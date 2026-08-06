@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, computeReveal, gradeBugHunt, calcCodeStrikeTotal } from '../lib/scoring.js';
+import { calcPhase1Score, calcPhase3Score, getPhase1Board, getFinalBoard, computeReveal, gradeBugHunt, calcCodeStrikeTotal, calcViolationPenalty } from '../lib/scoring.js';
 import { startBatteryDrain, stopBatteryDrain, pauseBatteryDrain, resumeBatteryDrain } from '../lib/battery.js';
 import { getRandomGauntletQuestion, getFiveZoneOptions, pickQuizQuestions, BUG_HUNT_PROGRAMS, CODE_STRIKE_PROBLEMS, RAPID_FIRE_QUESTIONS } from '../lib/questions.js';
 import { buildClientState, sanitizeQuestion } from '../index.js';
@@ -1012,7 +1012,7 @@ startBatteryDrain(db, io, saveDB);
       if (!auth(admin_token)) return;
       const phasesEnabled = db.app_state.event_config?.phases_enabled || [];
       const topN = db.app_state.event_config?.reveal_top_n || 0;
-      const result = computeReveal(db.teams, phasesEnabled, db.app_state.results_reveal_index, topN);
+      const result = computeReveal(db.teams, phasesEnabled, db.app_state.results_reveal_index, topN, db.app_state.event_config);
 
       // BUG FIX: there used to be no bounds check at all — clicking "Reveal
       // Next" past the last team broadcast a null-team announcement to
@@ -1366,6 +1366,11 @@ startBatteryDrain(db, io, saveDB);
         self_registration_max_teams: config.self_registration_max_teams !== undefined
           ? Math.max(0, Math.min(500, parseInt(config.self_registration_max_teams) || 0))
           : (db.app_state.event_config?.self_registration_max_teams ?? 0),
+        // Discipline settings
+        penalty_enabled: config.penalty_enabled !== undefined ? !!config.penalty_enabled : (db.app_state.event_config?.penalty_enabled !== false),
+        penalty_free_violations: Math.max(0, Math.min(10, parseInt(config.penalty_free_violations ?? db.app_state.event_config?.penalty_free_violations ?? 2))),
+        penalty_marks_each: Math.max(0, Math.min(25, parseFloat(config.penalty_marks_each ?? db.app_state.event_config?.penalty_marks_each ?? 2))),
+        penalty_max: Math.max(0, Math.min(100, parseFloat(config.penalty_max ?? db.app_state.event_config?.penalty_max ?? 10))),
         // BUG FIX: custom_questions wasn't included here either — every
         // config save silently deleted every custom question the admin
         // had added, with no warning.
@@ -2244,12 +2249,27 @@ startBatteryDrain(db, io, saveDB);
       team.violations.total += 1;
       team.violations[type] = (team.violations[type] || 0) + 1;
       team.violations.last_at = new Date().toISOString();
+      // Escalation: warning → yellow card → marks off (capped)
+      const pen = calcViolationPenalty(team.violations, db.app_state.event_config);
+      team.violations.stage = pen.stage;
+      team.violations.penalty = pen.penalty;
       saveDB();
       io.emit('team:delta', { id: team.id, violations: team.violations });
       const label = type === 'tab_switch' ? 'left the event tab' : 'tried to copy/paste';
-      io.emit('toast:broadcast', { message: `🚨 ${team.name} ${label} (violation #${team.violations.total})`, type: 'danger' });
-      log(io, db, 'violation', `🚨 ${team.name} ${label} — violation #${team.violations.total}`, team.id);
-      socket.emit('team:violation_recorded', { total: team.violations.total, type });
+      const cardIcon = pen.stage === 'warning' ? '⚠️' : pen.stage === 'yellow' ? '🟨' : '🟥';
+      // Cards stay between the admin and the team — no public shaming on
+      // the projector for what might have been an incoming phone call.
+      io.emit('toast:broadcast', {
+        message: `🚨 ${team.name} ${label} (violation #${team.violations.total})${pen.penalty ? ` — −${pen.penalty} marks` : ''}`,
+        type: 'danger',
+      });
+      log(io, db, 'violation', `${cardIcon} ${team.name} ${label} — violation #${team.violations.total}${pen.penalty ? ` (−${pen.penalty} marks)` : ''}`, team.id);
+      socket.emit('team:violation_recorded', {
+        total: team.violations.total, type,
+        stage: pen.stage, penalty: pen.penalty,
+        free: Math.max(0, parseInt(db.app_state.event_config?.penalty_free_violations ?? 2)),
+        each: parseFloat(db.app_state.event_config?.penalty_marks_each ?? 2),
+      });
     });
 
     // ── CUSTOM EVENT THEME ─────────────────────────────────────────

@@ -168,7 +168,10 @@ You can resubmit as many times as you want. **Last submission before timer ends 
 When the organisers enable Protected Mode, your event tab locks down during the timed rounds (Intelligence Scan, Bug Hunt, tie-breaks):
 - **Copy, paste and right-click are disabled** on the event page
 - **Switching tabs or apps is detected and reported to the admin the moment it happens** — you'll see "🚨 Violation recorded" and so will they
-- Violations are counted per team; repeat offenders face penalties up to disqualification (organiser's decision is final)
+- Violations escalate: **1st = warning** (no marks lost) → **2nd = yellow card** (no marks lost) → **3rd and beyond = −2 marks each**, capped at −10
+- The first two are free because phones ring and notifications happen — but after that it costs you
+- If two teams finish level, the team with **fewer violations places higher**
+- Your card is shown only to you and the organisers, never on the big screen
 - Code Strike is the exception — you're expected to switch to your editor there
 
 ### TIE BREAKER ⚡

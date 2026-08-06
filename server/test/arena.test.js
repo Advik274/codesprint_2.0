@@ -2,7 +2,7 @@
 // the combined results board, and the quiz bank selector.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { gradeBugHunt, calcCodeStrikeProblemScore, calcCodeStrikeTotal, getResultsBoard, computeReveal } from '../lib/scoring.js';
+import { gradeBugHunt, calcCodeStrikeProblemScore, calcCodeStrikeTotal, getResultsBoard, computeReveal, calcViolationPenalty } from '../lib/scoring.js';
 import { pickQuizQuestions, ARENA_MCQ_POOL, GAUNTLET_QUESTIONS, BUG_HUNT_PROGRAMS, CODE_STRIKE_PROBLEMS } from '../lib/questions.js';
 
 const PROGRAMS = [
@@ -160,7 +160,7 @@ describe('getResultsBoard — CODE ARENA combined branch', () => {
     assert.equal(board[0].team_id, 'a'); // 79 vs 60
     assert.equal(board[0].score, 79);
     assert.equal(board[0].score_label, 'Total Marks');
-    assert.deepEqual(board[0].scores, { quiz: 15, bughunt: 24, codestrike: 40, tiebreak_wins: 0 });
+    assert.deepEqual(board[0].scores, { quiz: 15, bughunt: 24, codestrike: 40, penalty: 0, violations: 0, card: 'clean', tiebreak_wins: 0 });
 
     // Same teams, but quiz not part of the event → quiz marks don't count
     const noQuiz = getResultsBoard(teams, ['bug_hunt', 'code_strike']);
@@ -232,5 +232,89 @@ describe('pickQuizQuestions — bank selector', () => {
 
   test('20 questions for CODE ARENA Mission 1 come back as exactly 20', () => {
     assert.equal(pickQuizQuestions(20, [], [], 'arena').length, 20);
+  });
+});
+
+describe('calcViolationPenalty — escalating discipline', () => {
+  test('a clean team is clean', () => {
+    const r = calcViolationPenalty(null);
+    assert.equal(r.stage, 'clean');
+    assert.equal(r.penalty, 0);
+  });
+
+  test('first violation is a free warning', () => {
+    const r = calcViolationPenalty({ total: 1 });
+    assert.equal(r.stage, 'warning');
+    assert.equal(r.penalty, 0);
+  });
+
+  test('second is a yellow card, still free', () => {
+    const r = calcViolationPenalty({ total: 2 });
+    assert.equal(r.stage, 'yellow');
+    assert.equal(r.penalty, 0);
+  });
+
+  test('third and beyond cost marks', () => {
+    assert.equal(calcViolationPenalty({ total: 3 }).stage, 'red');
+    assert.equal(calcViolationPenalty({ total: 3 }).penalty, 2);
+    assert.equal(calcViolationPenalty({ total: 5 }).penalty, 6);
+  });
+
+  test('the deduction is capped so one bad phone cannot zero a team', () => {
+    assert.equal(calcViolationPenalty({ total: 99 }).penalty, 10);
+  });
+
+  test('honours configured thresholds', () => {
+    const cfg = { penalty_free_violations: 0, penalty_marks_each: 5, penalty_max: 100 };
+    assert.equal(calcViolationPenalty({ total: 1 }, cfg).penalty, 5);
+    assert.equal(calcViolationPenalty({ total: 3 }, cfg).penalty, 15);
+  });
+
+  test('can be switched off entirely (warnings only)', () => {
+    const r = calcViolationPenalty({ total: 9 }, { penalty_enabled: false });
+    assert.equal(r.stage, 'red');       // still shows the card
+    assert.equal(r.penalty, 0);         // but costs nothing
+  });
+});
+
+describe('getResultsBoard — penalties applied', () => {
+  test('penalty is subtracted from the combined total', () => {
+    const teams = [
+      makeTeam({ id: 'clean', bughunt_score: 30, codestrike_score: 40 }),
+      makeTeam({ id: 'naughty', bughunt_score: 30, codestrike_score: 40, violations: { total: 5 } }),
+    ];
+    const board = getResultsBoard(teams, ['bug_hunt', 'code_strike']);
+    assert.equal(board[0].team_id, 'clean');
+    assert.equal(board[0].score, 70);
+    assert.equal(board[1].team_id, 'naughty');
+    assert.equal(board[1].score, 64);            // 70 − 6
+    assert.equal(board[1].scores.penalty, 6);
+    assert.equal(board[1].scores.card, 'red');
+  });
+
+  test('a team can never be pushed below zero', () => {
+    const teams = [makeTeam({ id: 'a', bughunt_score: 3, violations: { total: 20 } })];
+    assert.equal(getResultsBoard(teams, ['bug_hunt'])[0].score, 0);
+  });
+
+  test('free violations do not change the score', () => {
+    const teams = [makeTeam({ id: 'a', bughunt_score: 30, violations: { total: 2 } })];
+    const row = getResultsBoard(teams, ['bug_hunt'])[0];
+    assert.equal(row.score, 30);
+    assert.equal(row.scores.card, 'yellow');
+  });
+
+  test('equal totals break on tie-break wins first, then cleaner record', () => {
+    const teams = [
+      makeTeam({ id: 'dirty', bughunt_score: 30, violations: { total: 2 } }),
+      makeTeam({ id: 'clean', bughunt_score: 30 }),
+    ];
+    assert.equal(getResultsBoard(teams, ['bug_hunt'])[0].team_id, 'clean');
+
+    const withWin = [
+      makeTeam({ id: 'dirty_winner', bughunt_score: 30, violations: { total: 2 }, tiebreak_wins: 1 }),
+      makeTeam({ id: 'clean', bughunt_score: 30 }),
+    ];
+    assert.equal(getResultsBoard(withWin, ['bug_hunt'])[0].team_id, 'dirty_winner');
   });
 });

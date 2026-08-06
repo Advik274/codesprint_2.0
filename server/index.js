@@ -135,6 +135,13 @@ export const EMPTY_DB = () => ({
       // opens it at the registration desk and closes it when done.
       self_registration: false,
       self_registration_max_teams: 0, // 0 = no cap
+      // Discipline: escalating penalties for Protected Mode violations.
+      // First two are free (warning, then yellow card) because a tab
+      // switch can be an incoming call; marks only come off after that.
+      penalty_enabled: true,
+      penalty_free_violations: 2,
+      penalty_marks_each: 2,
+      penalty_max: 10,
       // V7: Custom Questions
       custom_questions: [],
     },
@@ -202,6 +209,10 @@ function patchDB() {
   if (s.event_config.theme === undefined) s.event_config.theme = null;
   if (s.event_config.self_registration === undefined) s.event_config.self_registration = false;
   if (s.event_config.self_registration_max_teams === undefined) s.event_config.self_registration_max_teams = 0;
+  if (s.event_config.penalty_enabled === undefined) s.event_config.penalty_enabled = true;
+  if (s.event_config.penalty_free_violations === undefined) s.event_config.penalty_free_violations = 2;
+  if (s.event_config.penalty_marks_each === undefined) s.event_config.penalty_marks_each = 2;
+  if (s.event_config.penalty_max === undefined) s.event_config.penalty_max = 10;
   // CODE ARENA: app_state defaults
   if (s.bughunt_active === undefined) s.bughunt_active = false;
   if (s.bughunt_timer_end === undefined) s.bughunt_timer_end = null;

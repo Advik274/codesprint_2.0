@@ -27,15 +27,30 @@ export default function Spectator() {
   const phasesEnabled = state.app_state?.event_config?.phases_enabled || [];
   // CODE ARENA: combined mission total (mirrors server getResultsBoard)
   const isArena = phasesEnabled.includes('bug_hunt') || phasesEnabled.includes('code_strike');
-  const arenaTotalOf = (t) =>
+  // Penalties are subtracted from the total, but the cards themselves stay
+  // between the admin and the team — the projector shows the final number,
+  // not a public shaming for what may have been an incoming phone call.
+  const arenaPenaltyOf = (t) => {
+    const cfg = state.app_state?.event_config || {};
+    if (cfg.penalty_enabled === false) return 0;
+    const total = t.violations?.total || 0;
+    const free = Math.max(0, parseInt(cfg.penalty_free_violations ?? 2));
+    const each = Math.max(0, parseFloat(cfg.penalty_marks_each ?? 2));
+    const max = Math.max(0, parseFloat(cfg.penalty_max ?? 10));
+    return Math.round(Math.min(Math.max(0, total - free) * each, max) * 10) / 10;
+  };
+  const arenaTotalOf = (t) => Math.max(0,
     (phasesEnabled.includes('quiz_round') ? (t.quiz_marks_scored||0) : 0)
     + (phasesEnabled.includes('bug_hunt') ? (t.bughunt_score||0) : 0)
-    + (phasesEnabled.includes('code_strike') ? (t.codestrike_score||0) : 0);
+    + (phasesEnabled.includes('code_strike') ? (t.codestrike_score||0) : 0)
+    - arenaPenaltyOf(t));
   const finalBoard = (() => {
     if (isArena) {
       return [...state.teams]
         .filter(t => !t.is_eliminated)
-        .sort((a, b) => arenaTotalOf(b) - arenaTotalOf(a) || (b.tiebreak_wins||0) - (a.tiebreak_wins||0));
+        .sort((a, b) => arenaTotalOf(b) - arenaTotalOf(a)
+          || (b.tiebreak_wins||0) - (a.tiebreak_wins||0)
+          || (a.violations?.total||0) - (b.violations?.total||0));
     }
     if (phasesEnabled.includes('phase3')) {
       return [...state.teams]
