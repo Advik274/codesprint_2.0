@@ -150,6 +150,7 @@ You can resubmit as many times as you want. **Last submission before timer ends 
 ### MISSION 1 — INTELLIGENCE SCAN · 25 MCQs · 15 min · 20 marks
 - Topics: Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning
 - Every member answers on their own device; your team score is the **average** across members who submit — everyone participating beats one person carrying
+- **Pick your name from your team's list** — no typing, so nobody's answers get filed under a misspelling. If your name isn't there, tell a coordinator and it appears within seconds
 - Submit before the timer — unanswered = 0 for those questions
 
 ### MISSION 2 — BUG HUNT · 5 buggy programs · 20 min · 30 marks

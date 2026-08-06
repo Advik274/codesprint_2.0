@@ -42,6 +42,8 @@ Load these exact numbers in one click: **Config → ⚔️ CODE ARENA 2026 templ
 ### Mission 1 — Intelligence Scan
 - Same Quiz Round flow as always; the template points it at the **multi-topic bank** (Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical) instead of the DSA pool.
 - Each member submits on their own phone; team score = member average, auto-normalised to **/20 marks** for the combined board.
+- **Members pick their name from the team roster — no typing.** The leader enters everyone's names once at registration; each member then taps their own name, and names already used are shown greyed out so two people can't submit as the same person.
+- **Someone missing from the list?** Teams tab → ✏️ **Edit** on that team → add the name → Save. It appears on their phone immediately, mid-round, no reload. (The quiz only accepts names on the roster, so this is the fix when a leader typos or forgets someone — expect one or two.)
 - "Top teams qualify" → use the existing **Eliminate Bottom N** control in the Quiz tab if you want cuts after M1 (optional — the combined leaderboard works without eliminating anyone).
 
 ### Mission 2 — Bug Hunt

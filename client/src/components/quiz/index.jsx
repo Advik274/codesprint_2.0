@@ -24,11 +24,25 @@ export function QuizRound({ teamId, state }) {
   const [filter, setFilter] = useState('all'); // 'all' | 'unanswered'
 
   const rawQuestions = app_state.quiz_questions || [];
-  // The team's own roster, stashed privately at join time
-  const roster = (() => {
+  // The team's own roster, stashed privately at join time. Kept in state
+  // and refreshed live so that when a coordinator adds a member who was
+  // left off the list, their name appears on the team's phones straight
+  // away instead of after a reload.
+  const readRoster = () => {
     try { const r = JSON.parse(sessionStorage.getItem('team_members') || '[]'); return Array.isArray(r) ? r.filter(Boolean) : []; }
     catch { return []; }
-  })();
+  };
+  const [roster, setRoster] = useState(readRoster);
+  useEffect(() => {
+    const socket = getSocket();
+    const onRoster = (d) => {
+      const list = Array.isArray(d?.members) ? d.members.filter(Boolean) : [];
+      sessionStorage.setItem('team_members', JSON.stringify(list));
+      setRoster(list);
+    };
+    socket.on('team:roster_updated', onRoster);
+    return () => socket.off('team:roster_updated', onRoster);
+  }, []);
 
   // BUG FIX 1: Shuffle questions once per quiz session, per client.
   // We track the quiz session by question count + first question id to detect a new quiz start.
@@ -186,6 +200,11 @@ export function QuizRound({ teamId, state }) {
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
             Each team member submits answers individually. Scores are averaged.
           </div>
+          {roster.length > 0 && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
+              Name not on the list? Ask a coordinator to add you — it appears here the moment they do, no reload needed.
+            </div>
+          )}
         </div>
         <button className="btn-primary" onClick={() => memberName.trim() && !nameInOtherTeam && setNameSubmitted(true)}
           disabled={!memberName.trim() || nameInOtherTeam} style={{ width: '100%', padding: 12, fontSize: 15 }}>

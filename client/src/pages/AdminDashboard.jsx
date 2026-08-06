@@ -50,6 +50,7 @@ export default function AdminDashboard() {
   const [broadcastMsg, setBroadcastMsg] = useState('');
   const [broadcastType, setBroadcastType] = useState('info');
   const [teamSearch, setTeamSearch] = useState('');
+  const [editingTeam, setEditingTeam] = useState(null); // { id, name, members: string }
   const [battOverride, setBattOverride] = useState({});
   const [problemMsg, setProblemMsg] = useState('');
   const [submissionCount, setSubmissionCount] = useState(0);
@@ -111,6 +112,18 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!authed) return;
     getSocket().emit('admin:request_passcodes', { admin_token: sessionStorage.getItem('admin_session') || '' });
+  }, [authed]);
+
+  // Roster for the edit modal arrives on demand (it is stripped from
+  // public state), so fill the form when it lands.
+  useEffect(() => {
+    if (!authed) return;
+    const socket = getSocket();
+    const onDetail = (d) => setEditingTeam(t => (t && t.id === d.team_id
+      ? { ...t, members: (d.members || []).join('\n'), loading: false }
+      : t));
+    socket.on('admin:team_detail', onDetail);
+    return () => socket.off('admin:team_detail', onDetail);
   }, [authed]);
 
   // Teams can now also appear from the self-registration QR, which the
@@ -832,6 +845,14 @@ export default function AdminDashboard() {
                         </button>
                       );
                     })()}
+                    <button className="btn-ghost" style={{ fontSize:11, padding:'4px 10px' }}
+                      title="Fix the team name or roster. A member missing from the roster cannot submit in the quiz round."
+                      onClick={()=>{
+                        setEditingTeam({ id:team.id, name:team.name, members:'', loading:true });
+                        getSocket().emit('admin:request_team_detail',{ team_id:team.id, admin_token:sessionStorage.getItem('admin_session')||'' });
+                      }}>
+                      ✏️ Edit
+                    </button>
                     {team.is_eliminated
                       ?<button className="btn-ghost" onClick={()=>emit('admin:restore_team',{team_id:team.id})} style={{ fontSize:11, padding:'4px 10px', color:'var(--accent)' }}>Restore</button>
                       :<button className="btn-danger" onClick={()=>{ if(confirm(`Eliminate ${team.name}?`)) emit('admin:eliminate_team',{team_id:team.id}); }} style={{ padding:'4px 10px', fontSize:11 }}>Eliminate</button>
@@ -841,6 +862,35 @@ export default function AdminDashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Edit team modal — name + roster */}
+        {editingTeam && (
+          <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:600, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}
+            onClick={()=>setEditingTeam(null)}>
+            <div className="card card-lg" style={{ maxWidth:460, width:'100%', border:'1px solid var(--accent)' }} onClick={e=>e.stopPropagation()}>
+              <h3 style={{ fontFamily:'var(--font-display)', fontSize:18, color:'var(--accent)', marginBottom:6 }}>EDIT TEAM</h3>
+              <div style={{ fontSize:12.5, color:'var(--text2)', marginBottom:16, lineHeight:1.6 }}>
+                The quiz round only accepts submissions from names on this roster — add anyone who was missed and it updates on their phone instantly.
+              </div>
+              <label style={{ display:'block', fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:4, textTransform:'uppercase' }}>Team Name</label>
+              <input value={editingTeam.name} maxLength={40}
+                onChange={e=>setEditingTeam(t=>({...t, name:e.target.value}))} style={{ marginBottom:14 }}/>
+              <label style={{ display:'block', fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:4, textTransform:'uppercase' }}>Members (one per line, max 6)</label>
+              <textarea rows={6} value={editingTeam.members}
+                onChange={e=>setEditingTeam(t=>({...t, members:e.target.value}))}
+                placeholder={'Aarav Kumar\nPriya Singh\nRohan Das'}
+                style={{ width:'100%', fontFamily:'var(--font-body)', fontSize:14, marginBottom:14 }}/>
+              <div style={{ display:'flex', gap:10 }}>
+                <button className="btn-ghost" style={{ flex:1, padding:12 }} onClick={()=>setEditingTeam(null)}>Cancel</button>
+                <button className="btn-primary" style={{ flex:2, padding:12 }} onClick={()=>{
+                  emit('admin:update_team',{ team_id:editingTeam.id, name:editingTeam.name,
+                    members: editingTeam.members.split('\n').map(m=>m.trim()).filter(Boolean) });
+                  setEditingTeam(null);
+                }}>Save Changes</button>
+              </div>
+            </div>
           </div>
         )}
 

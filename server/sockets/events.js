@@ -618,6 +618,51 @@ export function registerSocketEvents(io, db, saveDB, saveDBNow) {
       socket.emit('admin:passcodes', db.teams.map(t => ({ id: t.id, passcode: t.passcode })));
     });
 
+    // Rosters are stripped from public state (they're team-private), so
+    // the admin panel pulls one on demand to populate the edit form.
+    socket.on('admin:request_team_detail', ({ team_id, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team) return;
+      socket.emit('admin:team_detail', { team_id, name: team.name, members: team.members || [], passcode: team.passcode });
+    });
+
+    // Edit a team's name or roster after registration.
+    //
+    // The quiz validates submissions against the roster, so a leader who
+    // typo'd a name or forgot a member locked that person out of Mission 1
+    // entirely — and the rejection message told them to "ask a
+    // coordinator", who had no way to fix it. This is that way.
+    socket.on('admin:update_team', async ({ team_id, name, members, admin_token }) => {
+      if (!auth(admin_token)) return;
+      const team = db.teams.find(t => t.id === team_id);
+      if (!team) return;
+
+      if (typeof name === 'string' && name.trim() && name.trim() !== team.name) {
+        const clean = name.trim().replace(/\s+/g, ' ').slice(0, LIMITS.NAME_MAX);
+        const clash = db.teams.some(t => t.id !== team_id && t.name.trim().toLowerCase() === clean.toLowerCase());
+        if (clash) { socket.emit('admin:error', { message: `Another team is already called "${clean}".` }); return; }
+        team.name = clean;
+      }
+
+      if (Array.isArray(members)) {
+        team.members = members
+          .map(m => (typeof m === 'string' ? m.trim().replace(/\s+/g, ' ') : ''))
+          .filter(Boolean)
+          .map(m => m.slice(0, LIMITS.MEMBER_MAX_LEN))
+          .slice(0, LIMITS.MAX_MEMBERS);
+      }
+
+      await saveDBNow();
+      // Name is public; the roster is team-private, so it goes only to
+      // that team's room — where the quiz picker updates live, letting a
+      // member who was missing join in mid-round.
+      io.emit('team:delta', { id: team.id, name: team.name });
+      io.to(`team_${team.id}`).emit('team:roster_updated', { members: team.members });
+      socket.emit('admin:team_updated', { team_id, name: team.name, members: team.members });
+      log(io, db, 'config', `Team updated: ${team.name} (${team.members.length} member${team.members.length !== 1 ? 's' : ''})`, team.id);
+    });
+
     socket.on('admin:delete_team', ({ team_id, admin_token }) => {
       if (!auth(admin_token)) return;
       db.teams = db.teams.filter(t => t.id !== team_id);
