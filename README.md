@@ -9,9 +9,9 @@ The platform now also runs the **CODE ARENA 2026** event format (Reboot Club) �
 
 | Mission | Phase key | What it is | Default |
 |---|---|---|---|
-| Mission 1 — Intelligence Scan | `quiz_round` (existing) | 20 MCQs from a new multi-topic bank (Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning) — pick the bank in Config | 20 Q · 25 min · 20 marks |
-| Mission 2 — Bug Hunt | `bug_hunt` (new) | 5 buggy programs (Java/C++/Python), teams type the corrected line; auto-graded by the lenient matcher with per-program admin override | 5 programs · 30 min · 30 marks |
-| Mission 3 — Code Strike | `code_strike` (new) | 3 problems (Easy 10 / Medium 15 / Hard 25) revealed with a live timer; teams paste final code per problem; judge panel scores correctness + efficiency, time bonus is automatic | 45 min · 50 marks |
+| Mission 1 — Intelligence Scan | `quiz_round` (existing) | MCQs from a new multi-topic bank (Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning) — pick the bank in Config | 25 Q · 15 min · 20 marks |
+| Mission 2 — Bug Hunt | `bug_hunt` (new) | 5 buggy programs (Java/C++/Python), teams type the corrected line; auto-graded by the lenient matcher with per-program admin override | 5 programs · 20 min · 30 marks |
+| Mission 3 — Code Strike | `code_strike` (new) | 4 problems (Easy 8 / Medium 12 / Medium 12 / Extreme 18) revealed with a live timer; teams paste final code per problem; judge panel scores correctness + efficiency, time bonus is automatic | 4 problems · 40 min · 50 marks |
 | Tie Breaker | Tie-Break tab (any time) | Admin fires a rapid-fire question at the tied teams — server timestamps answers, first correct team wins ⚡ | — |
 
 - **Combined leaderboard** — when Bug Hunt or Code Strike is enabled, Results/Spectator/reveal all switch to summed mission marks (`/100` with the defaults) with tie-break wins ordering equal totals.

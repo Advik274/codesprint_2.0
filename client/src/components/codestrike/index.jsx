@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getSocket } from '../../hooks/useSocket';
 import { CountdownTimer } from '../shared/index.jsx';
 
-const DIFF_COLORS = { easy: 'var(--accent)', medium: 'var(--warning)', hard: 'var(--danger)' };
+const DIFF_COLORS = { easy: 'var(--accent)', medium: 'var(--warning)', hard: 'var(--danger)', extreme: 'var(--danger)' };
 const LANGUAGES = ['python', 'java', 'cpp', 'c', 'javascript', 'other'];
 
 // ── CodeStrikeRound — team view (Mission 3) ──────────────────────

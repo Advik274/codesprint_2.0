@@ -22,16 +22,22 @@
 
 Three missions on the same platform, 100 marks total. Enable via **Config tab → ⚔️ CODE ARENA 2026 template → Save** (sets: quiz 20 Q / 25 min / arena bank / 20 marks · Bug Hunt 5 programs / 30 min / 30 marks · Code Strike 45 min / 50 marks).
 
-### Timeline (per the event plan)
-| Activity | Time | Where |
+### Run sheet (live timings)
+| Clock | Activity | Where |
 |---|---|---|
-| Registration & verification | 15 min | Setup tab (Bulk CSV Import + passcode cards from QR tab) |
-| Welcome & rules | 10 min | `/guide` on participant phones |
-| Mission 1 — Intelligence Scan | 25 min | Control → Advance to Phase 1 → 🧠 Quiz tab → Start |
-| Mission 2 — Bug Hunt | 30 min | Control → Advance → 🐛 Bug Hunt tab → Start |
-| Mission 3 — Code Strike | 45 min | Control → Advance → ⚔️ Code Strike tab → Start |
-| Leaderboard & tie breaker | 15 min | Control → Advance to Results → Dramatic Reveal (+ ⚡ Tie-Break tab if needed) |
-| Prize distribution | 10 min | Results tab → Thank You page |
+| before 3:30 | Registration & verification | Setup tab — open the self-registration QR, or Bulk CSV Import + passcode cards |
+| **3:30 – 3:45** | **Mission 1 — Intelligence Scan** · 25 MCQs / 15 min | Control → Advance → 🧠 Quiz tab → Start |
+| **3:45 – 4:05** | **Mission 2 — Bug Hunt** · 5 programs / 20 min | Control → Advance → 🐛 Bug Hunt tab → Start |
+| 4:05 – 4:10 | Changeover / breather | Grade Bug Hunt while they stretch |
+| **4:10 – 4:50** | **Mission 3 — Code Strike** · 4 problems / 40 min | Control → Advance → ⚔️ Code Strike tab → Start |
+| after 4:50 | Judging, leaderboard & tie-breaker | Judge panel → Advance to Results → Dramatic Reveal (+ ⚡ Tie-Break) |
+| | Prize distribution | Results tab → Thank You page |
+
+Load these exact numbers in one click: **Config → ⚔️ CODE ARENA 2026 template → Save**.
+
+⏱ **Pacing note:** 25 MCQs in 15 minutes is 36 seconds per question. That is deliberately brisk — tell teams up front to skip and come back rather than stall, since unanswered questions simply score 0. If it looks too tight on the day, the Quiz tab's **+5m** button adjusts the live timer without restarting the round.
+
+**Mission 3 problem set:** Easy 8 (Vowel Census) · Medium 12 (Silver Medal) · Medium 12 (Bracket Inspector) · Extreme 18 (Exact Change). The extreme one has a deliberate greedy trap — teams whose code prints 3 for its first sample took the greedy route and are wrong; the judge notes in the panel spell this out.
 
 ### Mission 1 — Intelligence Scan
 - Same Quiz Round flow as always; the template points it at the **multi-topic bank** (Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical) instead of the DSA pool.

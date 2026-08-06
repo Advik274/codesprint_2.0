@@ -86,7 +86,7 @@ describe('calcCodeStrikeProblemScore', () => {
 });
 
 describe('calcCodeStrikeTotal', () => {
-  const problems = CODE_STRIKE_PROBLEMS; // marks 10 + 15 + 25 = 50
+  const problems = CODE_STRIKE_PROBLEMS; // marks 8 + 12 + 12 + 18 = 50
   const startedAt = '2026-01-01T10:00:00.000Z';
   const durationMs = 45 * 60 * 1000;
 
@@ -99,12 +99,13 @@ describe('calcCodeStrikeTotal', () => {
     const submitted_at = startedAt; // elapsed 0 → full time bonus
     const team = {
       codestrike_submissions: {
-        cs_easy: { submitted_at }, cs_medium: { submitted_at }, cs_hard: { submitted_at },
+        cs_easy: { submitted_at }, cs_medium: { submitted_at }, cs_brackets: { submitted_at }, cs_extreme: { submitted_at },
       },
       codestrike_judge: {
         cs_easy: { correctness: 10, efficiency: 10 },
         cs_medium: { correctness: 10, efficiency: 10 },
-        cs_hard: { correctness: 10, efficiency: 10 },
+        cs_brackets: { correctness: 10, efficiency: 10 },
+        cs_extreme: { correctness: 10, efficiency: 10 },
       },
     };
     assert.equal(calcCodeStrikeTotal(team, problems, startedAt, durationMs, 50), 50);
@@ -112,12 +113,12 @@ describe('calcCodeStrikeTotal', () => {
 
   test('earlier submission beats an identical later one (time bonus)', () => {
     const early = {
-      codestrike_submissions: { cs_hard: { submitted_at: '2026-01-01T10:05:00.000Z' } },
-      codestrike_judge: { cs_hard: { correctness: 8, efficiency: 8 } },
+      codestrike_submissions: { cs_brackets: { submitted_at: '2026-01-01T10:05:00.000Z' } },
+      codestrike_judge: { cs_brackets: { correctness: 8, efficiency: 8 } },
     };
     const late = {
-      codestrike_submissions: { cs_hard: { submitted_at: '2026-01-01T10:44:00.000Z' } },
-      codestrike_judge: { cs_hard: { correctness: 8, efficiency: 8 } },
+      codestrike_submissions: { cs_brackets: { submitted_at: '2026-01-01T10:44:00.000Z' } },
+      codestrike_judge: { cs_brackets: { correctness: 8, efficiency: 8 } },
     };
     const earlyScore = calcCodeStrikeTotal(early, problems, startedAt, durationMs, 50);
     const lateScore = calcCodeStrikeTotal(late, problems, startedAt, durationMs, 50);
@@ -127,11 +128,12 @@ describe('calcCodeStrikeTotal', () => {
   test('scales to the configured mission marks when they differ from the problems sum', () => {
     const submitted_at = startedAt;
     const team = {
-      codestrike_submissions: { cs_easy: { submitted_at }, cs_medium: { submitted_at }, cs_hard: { submitted_at } },
+      codestrike_submissions: { cs_easy: { submitted_at }, cs_medium: { submitted_at }, cs_brackets: { submitted_at }, cs_extreme: { submitted_at } },
       codestrike_judge: {
         cs_easy: { correctness: 10, efficiency: 10 },
         cs_medium: { correctness: 10, efficiency: 10 },
-        cs_hard: { correctness: 10, efficiency: 10 },
+        cs_brackets: { correctness: 10, efficiency: 10 },
+        cs_extreme: { correctness: 10, efficiency: 10 },
       },
     };
     assert.equal(calcCodeStrikeTotal(team, problems, startedAt, durationMs, 100), 100);

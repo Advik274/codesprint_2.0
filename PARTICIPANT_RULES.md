@@ -147,19 +147,19 @@ You can resubmit as many times as you want. **Last submission before timer ends 
 
 **Format:** 3 missions, 100 marks total. One laptop per team for Bug Hunt and Code Strike. Team discussion allowed. AI tools NOT allowed. No plagiarism.
 
-### MISSION 1 — INTELLIGENCE SCAN · 20 MCQs · 25 min · 20 marks
+### MISSION 1 — INTELLIGENCE SCAN · 25 MCQs · 15 min · 20 marks
 - Topics: Java, C/C++, Python, DBMS, OS, Git, HTML/CSS, Aptitude, Logical Reasoning
 - Every member answers on their own device; your team score is the **average** across members who submit — everyone participating beats one person carrying
 - Submit before the timer — unanswered = 0 for those questions
 
-### MISSION 2 — BUG HUNT · 5 buggy programs · 30 min · 30 marks
+### MISSION 2 — BUG HUNT · 5 buggy programs · 20 min · 30 marks
 - Five short programs in Java / C++ / Python — each has a planted syntax or logic bug
 - Read the code, find the bug, and **type the corrected line** in the box under each program
 - **One submission per team** — discuss first, lock in once. 6 marks per correct fix
 - Spacing and capitalisation don't matter; the fix itself does
 
-### MISSION 3 — CODE STRIKE · 3 problems · 45 min · 50 marks
-- Easy (10) / Medium (15) / Hard (25) revealed at once — solve in any language, any editor
+### MISSION 3 — CODE STRIKE · 4 problems · 40 min · 50 marks
+- Easy (8) / Medium (12) / Medium (12) / Extreme (18) revealed at once — solve in any language, any editor
 - **Paste your final code per problem** into the platform. Re-submitting is allowed until time runs out, but the latest paste resets your submission time
 - Scoring per problem: **70% correctness + 20% efficiency (judged) + 10% time bonus** (earlier = more)
 - Test against the sample inputs before pasting — judges run the samples first

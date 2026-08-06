@@ -1038,7 +1038,7 @@ int main() {
 // ═════════════════════════════════════════════════════════════════
 export const CODE_STRIKE_PROBLEMS = [
   {
-    id: 'cs_easy', difficulty: 'easy', marks: 10, title: 'Vowel Census',
+    id: 'cs_easy', difficulty: 'easy', marks: 8, title: 'Vowel Census',
     statement: `Given a single line of text, count how many vowels (a, e, i, o, u — case-insensitive) it contains.`,
     input_format: 'One line containing a string S (may contain spaces).',
     output_format: 'A single integer — the number of vowels in S.',
@@ -1050,7 +1050,7 @@ export const CODE_STRIKE_PROBLEMS = [
     judge_notes: 'Any language. Loop + membership check is enough. Watch for teams forgetting case-insensitivity (sample 2 catches it: O, E, A, E, A + none in 2026 = 6).',
   },
   {
-    id: 'cs_medium', difficulty: 'medium', marks: 15, title: 'Silver Medal',
+    id: 'cs_medium', difficulty: 'medium', marks: 12, title: 'Silver Medal',
     statement: `Given a list of N scores, print the SECOND LARGEST DISTINCT score. If all scores are equal (no second distinct value exists), print -1.`,
     input_format: 'First line: integer N. Second line: N space-separated integers.',
     output_format: 'A single integer — the second largest distinct value, or -1.',
@@ -1062,7 +1062,7 @@ export const CODE_STRIKE_PROBLEMS = [
     judge_notes: 'Efficiency: sorting is fine at this N; a single pass tracking top-2 is the efficient answer. Duplicates of the max must not count as second largest (sample 1 catches it).',
   },
   {
-    id: 'cs_hard', difficulty: 'hard', marks: 25, title: 'Bracket Inspector',
+    id: 'cs_brackets', difficulty: 'medium', marks: 12, title: 'Bracket Inspector',
     statement: `A source file contains only bracket characters: ( ) [ ] { }. Determine whether the sequence is BALANCED — every opening bracket is closed by the same type in the correct order.`,
     input_format: 'One line containing the bracket string B.',
     output_format: 'Print YES if balanced, NO otherwise.',
@@ -1073,6 +1073,20 @@ export const CODE_STRIKE_PROBLEMS = [
       { input: '((()', output: 'NO' },
     ],
     judge_notes: 'Classic stack problem. Correct solutions must handle interleaving ([)] and unclosed openers ((() . O(n) with a stack is the efficient answer; nested replace() loops work but are O(n²) — score efficiency lower.',
+  },
+  {
+    id: 'cs_extreme', difficulty: 'extreme', marks: 18, title: 'Exact Change',
+    statement: `A vending machine must dispense an exact amount using the FEWEST possible coins.
+
+Given the denominations it stocks (unlimited supply of each) and a target amount, print the minimum number of coins that add up to EXACTLY that amount, or -1 if the amount cannot be made at all.`,
+    input_format: 'First line: two integers N (number of denominations) and A (target amount). Second line: N space-separated distinct positive integers — the denominations.',
+    output_format: 'A single integer — the minimum number of coins, or -1 if impossible.',
+    constraints: '1 <= N <= 20, 1 <= A <= 10000, each denomination <= 10000',
+    samples: [
+      { input: '3 6\n1 3 4', output: '2' },
+      { input: '2 7\n2 4', output: '-1' },
+    ],
+    judge_notes: 'THE TRAP: greedy (always take the largest coin that fits) is WRONG and sample 1 proves it — greedy gives 4+1+1 = 3 coins, but 3+3 = 2 is optimal. A team whose code prints 3 for sample 1 has written the greedy solution: correctness low, no matter how clean the code looks. Sample 2 checks they handle the impossible case with -1 rather than looping forever or printing 0. Expected solution is DP over amounts, O(N*A). Plain recursion without memoisation returns the right answer but blows up near A=10000 — mark correctness on the samples, efficiency low.',
   },
 ];
 

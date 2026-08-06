@@ -2205,7 +2205,7 @@ function ConfigTab({ state, emit }) {
             <ConfigField form={form} setForm={setForm} label="Total Marks" field="codestrike_marks" min={1} max={100} />
           </div>
           <div style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--text3)', marginTop:6 }}>
-            3 problems (Easy 10 / Medium 15 / Hard 25) scaled to Total Marks. Score = 70% correctness + 20% efficiency + 10% submission-time bonus.
+            4 problems (Easy 8 / Medium 12 / Medium 12 / Extreme 18) scaled to Total Marks. Score = 70% correctness + 20% efficiency + 10% submission-time bonus.
           </div>
         </div>
         )}
@@ -2290,12 +2290,13 @@ function ConfigTab({ state, emit }) {
                 battery_drain_rate:'2', battery_attempt_cost:'5', battery_capture_gain:'20',
                 speed_demo_enabled:true, speed_demo_duration_sec:'90', audience_weight_percent:'10',
               }},
-              { label:'⚔️ CODE ARENA 2026', desc:'Reboot Club: Scan → Bug Hunt → Code Strike', preset:{
+              { label:'⚔️ CODE ARENA 2026', desc:'25 MCQ 15m → 5 debug 20m → 4 DSA 40m', preset:{
                 event_name:'CODE ARENA 2026',
                 phases_enabled:['quiz_round','bug_hunt','code_strike'],
-                quiz_num_questions:'20', quiz_duration_min:'25', quiz_question_source:'arena', quiz_marks:'20',
-                bughunt_num_programs:'5', bughunt_duration_min:'30', bughunt_marks:'30',
-                codestrike_duration_min:'45', codestrike_marks:'50',
+                // Matches the run sheet: 3:30 quiz · 3:45 debugging · 4:10 DSA
+                quiz_num_questions:'25', quiz_duration_min:'15', quiz_question_source:'arena', quiz_marks:'20',
+                bughunt_num_programs:'5', bughunt_duration_min:'20', bughunt_marks:'30',
+                codestrike_duration_min:'40', codestrike_marks:'50',
                 speed_demo_enabled:false,
               }},
             ].map(({ label, desc, preset }) => (
