@@ -59,6 +59,14 @@ The platform now also runs the **CODE ARENA 2026** event format (Reboot Club) �
 
 ---
 
+## ☁️ DEPLOYING
+
+Running it for a real event on a server rather than a laptop? **[GCP_DEPLOY.md](GCP_DEPLOY.md)** is the current runbook: one VM, one command to provision, and `./deploy/update.sh` to ship a change in ~30 seconds. It covers the split between what you can change live from the admin panel (rounds, timings, marks, theme, questions — no deploy) and what needs a deploy (problem sets, code).
+
+Older platform notes: [DEPLOY.md](DEPLOY.md), [RENDER_DEPLOY.md](RENDER_DEPLOY.md).
+
+---
+
 ## ⚡ QUICK START (do this in order)
 
 ### Step 1 — Install dependencies
